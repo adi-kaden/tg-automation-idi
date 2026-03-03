@@ -7,9 +7,34 @@ from app.config import get_settings
 from app.dependencies import DBSession, CurrentUser
 from app.models.user import User
 from app.schemas.user import UserLogin, UserResponse, Token
-from app.utils.security import verify_password, create_access_token
+from app.utils.security import verify_password, create_access_token, hash_password
+from app.schemas.common import MessageResponse
 
 router = APIRouter()
+
+
+@router.post("/setup", response_model=MessageResponse)
+async def setup_admin(db: DBSession):
+    """
+    One-time setup to create admin user if no users exist.
+    """
+    result = await db.execute(select(User))
+    existing = result.scalar_one_or_none()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Setup already completed. Users exist.",
+        )
+    admin = User(
+        email="admin@idigov.com",
+        hashed_password=hash_password("Admin123!"),
+        full_name="Admin User",
+        role="admin",
+        is_active=True,
+    )
+    db.add(admin)
+    await db.commit()
+    return MessageResponse(message="Admin user created: admin@idigov.com / Admin123!")
 settings = get_settings()
 
 
