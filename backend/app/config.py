@@ -7,6 +7,24 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/tg_content_engine"
 
+    @property
+    def async_database_url(self) -> str:
+        """Convert database URL to async format for asyncpg."""
+        url = self.database_url
+        # Handle Railway/Supabase URLs that don't have +asyncpg
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return url
+
+    @property
+    def sync_database_url(self) -> str:
+        """Get sync database URL for alembic migrations."""
+        url = self.database_url
+        # Remove +asyncpg if present for sync operations
+        if "+asyncpg" in url:
+            return url.replace("+asyncpg", "", 1)
+        return url
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
