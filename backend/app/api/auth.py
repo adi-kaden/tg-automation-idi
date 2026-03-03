@@ -19,7 +19,7 @@ async def setup_admin(db: DBSession):
     One-time setup to create admin user if no users exist.
     """
     result = await db.execute(select(User))
-    existing = result.scalar_one_or_none()
+    existing = result.scalars().first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -35,6 +35,8 @@ async def setup_admin(db: DBSession):
     db.add(admin)
     await db.commit()
     return MessageResponse(message="Admin user created: admin@idigov.com / Admin123!")
+
+
 settings = get_settings()
 
 
