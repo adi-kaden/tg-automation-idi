@@ -13,28 +13,33 @@ from app.schemas.common import MessageResponse
 router = APIRouter()
 
 
-@router.post("/setup", response_model=MessageResponse)
+@router.post("/setup")
 async def setup_admin(db: DBSession):
     """
     One-time setup to create admin user if no users exist.
     """
-    result = await db.execute(select(User))
-    existing = result.scalars().first()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Setup already completed. Users exist.",
+    try:
+        result = await db.execute(select(User))
+        existing = result.scalars().first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Setup already completed. Users exist.",
+            )
+        admin = User(
+            email="admin@idigov.com",
+            hashed_password=hash_password("Admin123!"),
+            name="Admin User",
+            role="admin",
+            is_active=True,
         )
-    admin = User(
-        email="admin@idigov.com",
-        hashed_password=hash_password("Admin123!"),
-        name="Admin User",
-        role="admin",
-        is_active=True,
-    )
-    db.add(admin)
-    await db.commit()
-    return MessageResponse(message="Admin user created: admin@idigov.com / Admin123!")
+        db.add(admin)
+        await db.commit()
+        return {"message": "Admin user created: admin@idigov.com / Admin123!", "success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"message": f"Error: {str(e)}", "success": False, "error_type": type(e).__name__}
 
 
 settings = get_settings()
