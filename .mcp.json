@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "n8n": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote@latest",
+        "https://adiya727.app.n8n.cloud/mcp-server/http",
+        "--header",
+        "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmYjE5ZmE5OS1jNWUxLTQ5MDQtYjcxYS1kMWU4OTQ1ODk2NzgiLCJpc3MiOiJuOG4iLCJhdWQiOiJtY3Atc2VydmVyLWFwaSIsImp0aSI6IjI5YjcxNWVmLWMyMGUtNGE4NS1iNGUxLWUyMmE5OTFiYjEyMCIsImlhdCI6MTc3MDk4NDI1OX0.T-CGWmUbwG26hB7cgJ_qaPjiTK3-fR0jAdgsiZUoNMM"
+      ]
+    }
+  }
+}

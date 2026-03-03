@@ -1,0 +1,580 @@
+# TG Content Engine - Development PRD
+
+## Project Overview
+Build the TG Content Engine web application - a Telegram content automation platform for IDIGOV Real Estate (Dubai). The system automates scraping Dubai/UAE news, generating AI-written bilingual posts (EN/RU), and publishing to Telegram on a fixed schedule.
+
+## Tech Stack
+- Frontend: Next.js 15, TypeScript, Tailwind CSS 4, shadcn/ui, TanStack Query, Zustand
+- Backend: FastAPI, SQLAlchemy 2.0 (async), Celery + Redis, Pydantic v2
+- Database: PostgreSQL 16, Redis 7
+- External APIs: Claude (stubbed), Gemini (stubbed), Telegram Bot (stubbed)
+
+## Phase 1: Foundation
+
+### Task 1.1: Backend Project Setup
+Create the backend directory structure with FastAPI:
+- backend/requirements.txt with all Python dependencies (fastapi, uvicorn, sqlalchemy, alembic, celery, redis, pydantic, python-jose, bcrypt, httpx, beautifulsoup4, trafilatura, python-telegram-bot)
+- backend/docker-compose.yml with PostgreSQL 16 and Redis 7 containers
+- backend/app/__init__.py
+
+### Task 1.2: Backend Configuration
+Create configuration files:
+- backend/app/config.py - Pydantic BaseSettings for all environment variables
+- backend/.env.example with all required environment variables
+- Support for DATABASE_URL, REDIS_URL, JWT settings, timezone settings
+
+### Task 1.3: Database Setup
+Set up async SQLAlchemy:
+- backend/app/database.py - Async engine, sessionmaker, Base class
+- Configure connection pooling and session management
+
+### Task 1.4: SQLAlchemy Models - Core
+Create core database models in backend/app/models/:
+- user.py - User model with email, hashed_password, name, role (admin/smm/viewer), telegram_user_id
+- setting.py - Settings model with key, value, is_encrypted, category
+
+### Task 1.5: SQLAlchemy Models - Scraping
+Create scraping-related models:
+- scrape_source.py - ScrapeSource with name, url, source_type, category, css_selectors, is_active
+- scrape_run.py - ScrapeRun with status, articles_found, articles_new, timestamps
+- scraped_article.py - ScrapedArticle with url, title, summary, full_text, relevance_score, engagement_potential
+
+### Task 1.6: SQLAlchemy Models - Content
+Create content-related models:
+- content_slot.py - ContentSlot with scheduled_date, scheduled_time, slot_number, content_type, status, approval_deadline
+- post_option.py - PostOption with title_en, body_en, title_ru, body_ru, hashtags, image_url, ai_quality_score
+- published_post.py - PublishedPost with posted content, telegram_message_id, selected_by
+
+### Task 1.7: SQLAlchemy Models - Analytics
+Create analytics models:
+- post_analytics.py - PostAnalytics with views, forwards, replies, reactions, engagement_rate
+- channel_snapshot.py - ChannelSnapshot with subscriber_count, avg_views, avg_engagement
+- post_template.py - PostTemplate with name, category, prompt_template, image_prompt_template
+
+### Task 1.8: Models Init and Relationships
+Create backend/app/models/__init__.py that:
+- Imports all models
+- Defines relationships between models
+- Exports all models for Alembic
+
+### Task 1.9: Alembic Setup
+Set up database migrations:
+- Initialize Alembic with async support
+- Configure alembic.ini and env.py for async SQLAlchemy
+- Create initial migration with all models
+
+### Task 1.10: Security Utilities
+Create backend/app/utils/security.py:
+- Password hashing with bcrypt
+- JWT token creation and verification
+- Password validation helpers
+
+### Task 1.11: Timezone Utilities
+Create backend/app/utils/timezone.py:
+- Dubai timezone (Asia/Dubai, GMT+4) utilities
+- UTC to Dubai conversion functions
+- Slot time calculations
+
+### Task 1.12: Dependencies Module
+Create backend/app/dependencies.py:
+- get_db() - async database session dependency
+- get_current_user() - JWT auth dependency
+- require_role() - role-based access control
+
+### Task 1.13: Pydantic Schemas - Auth
+Create backend/app/schemas/:
+- user.py - UserCreate, UserLogin, UserResponse, Token schemas
+- Base response schemas with standard format
+
+### Task 1.14: Auth API Endpoints
+Create backend/app/api/auth.py:
+- POST /api/auth/login - Login with email/password, return JWT
+- POST /api/auth/refresh - Refresh JWT token
+- GET /api/auth/me - Get current user profile
+
+### Task 1.15: FastAPI Main App
+Create backend/app/main.py:
+- FastAPI app initialization
+- CORS configuration for frontend
+- Include all API routers
+- Health check endpoint
+
+### Task 1.16: Database Seed Script
+Create backend/seed.py:
+- Create default admin user (admin@idigov.com)
+- Create default SMM user (smm@idigov.com)
+- Create 20+ scrape sources from the specification
+- Create default post templates for each category
+
+### Task 1.17: Frontend Project Setup
+Initialize Next.js 15 project:
+- Create frontend directory with create-next-app (App Router, TypeScript)
+- Install dependencies: tailwindcss, @tanstack/react-query, zustand, react-hook-form, zod, date-fns, date-fns-tz, lucide-react, recharts, sonner
+- Configure Tailwind CSS 4
+
+### Task 1.18: shadcn/ui Setup
+Set up shadcn/ui components:
+- Initialize shadcn/ui with proper configuration
+- Add essential components: button, input, card, dialog, dropdown-menu, form, label, select, table, tabs, toast, avatar, badge, separator, skeleton
+
+### Task 1.19: TypeScript Types
+Create frontend/src/types/index.ts:
+- Define all entity types matching backend schemas
+- User, ScrapeSource, ScrapedArticle, ContentSlot, PostOption, PublishedPost, PostAnalytics types
+
+### Task 1.20: API Client
+Create frontend/src/lib/api.ts:
+- Fetch wrapper with base URL configuration
+- Auth token handling (get/set/clear)
+- Request interceptor for JWT
+- Response error handling
+
+### Task 1.21: Auth Library
+Create frontend/src/lib/auth.ts:
+- Login function
+- Logout function
+- Token storage utilities
+- Auth state helpers
+
+### Task 1.22: Auth Store
+Create frontend/src/stores/auth-store.ts:
+- Zustand store for auth state
+- User state, isAuthenticated, isLoading
+- Login/logout actions
+- Persist auth state
+
+### Task 1.23: Login Page
+Create frontend/src/app/(auth)/login/page.tsx:
+- Clean centered login card with IDIGOV branding
+- Email and password form fields with validation
+- Submit button with loading state
+- Redirect to dashboard on success
+
+### Task 1.24: Auth Layout
+Create frontend/src/app/(auth)/layout.tsx:
+- Simple centered layout for auth pages
+- No sidebar, minimal styling
+
+### Task 1.25: Dashboard Layout - Sidebar
+Create frontend/src/components/layout/sidebar.tsx:
+- Fixed left sidebar (260px width)
+- IDIGOV logo at top
+- Navigation items with icons (Dashboard, Content Queue, Calendar, Posts, Scraper, Analytics, Templates, Settings)
+- Active item highlighting with teal accent
+- Collapsible on mobile
+
+### Task 1.26: Dashboard Layout - Header
+Create frontend/src/components/layout/header.tsx:
+- Top header with breadcrumb
+- User avatar and dropdown menu
+- Mobile menu toggle
+
+### Task 1.27: Dashboard Layout
+Create frontend/src/app/(dashboard)/layout.tsx:
+- Sidebar + header layout wrapper
+- Protected route (redirect if not authenticated)
+- Main content area with proper padding
+
+### Task 1.28: Dashboard Home Page
+Create frontend/src/app/(dashboard)/page.tsx:
+- Stats row with 4 cards (Posts Today, Pending Review, Subscribers, Avg Engagement)
+- Today's schedule section (placeholder)
+- Pending actions section (placeholder)
+- Quick actions buttons
+
+## Phase 2: Scraping Engine
+
+### Task 2.1: Pydantic Schemas - Scraper
+Create schemas for scraper:
+- scrape_source.py - ScrapeSourceCreate, ScrapeSourceUpdate, ScrapeSourceResponse
+- scraped_article.py - ScrapedArticleResponse with pagination
+- scrape_run.py - ScrapeRunResponse
+
+### Task 2.2: Base Scraper Service
+Create backend/app/services/scraper/base_scraper.py:
+- Abstract BaseScraper class
+- Common methods for fetching and parsing
+- Rate limiting and retry logic
+
+### Task 2.3: RSS Scraper
+Create backend/app/services/scraper/rss_scraper.py:
+- Parse RSS/Atom feeds using feedparser
+- Extract title, link, summary, published date
+- Fetch full text via trafilatura
+
+### Task 2.4: News Scraper
+Create backend/app/services/scraper/news_scraper.py:
+- Fetch HTML pages
+- Parse using CSS selectors or trafilatura
+- Handle pagination
+
+### Task 2.5: Mock Relevance Scorer
+Create backend/app/services/scraper/mock_scorer.py:
+- Stub for Claude API relevance scoring
+- Return random realistic scores (0-1) for relevance and engagement potential
+- Assign categories based on source type
+
+### Task 2.6: Scraper API Endpoints
+Create backend/app/api/scraper.py:
+- GET /api/scraper/sources - List all sources
+- POST /api/scraper/sources - Create source
+- PATCH /api/scraper/sources/{id} - Update source
+- DELETE /api/scraper/sources/{id} - Delete source
+- POST /api/scraper/sources/{id}/test - Test scrape
+- GET /api/scraper/runs - List runs
+- POST /api/scraper/run-now - Trigger scrape
+- GET /api/scraper/articles - List articles with filters
+
+### Task 2.7: Celery Setup
+Create backend/app/tasks/celery_app.py:
+- Celery app with Redis broker
+- Beat scheduler configuration
+- Task routing
+
+### Task 2.8: Scrape Task
+Create backend/app/tasks/scrape_task.py:
+- run_full_scrape() task
+- Iterate through active sources
+- Create ScrapeRun records
+- Deduplicate articles
+
+### Task 2.9: Scraper Dashboard Page
+Create frontend/src/app/(dashboard)/scraper/page.tsx:
+- Status overview card (last run, articles today)
+- Recent runs table with stats
+- "Run Now" button
+- Source health indicators
+
+### Task 2.10: Scraper Sources Page
+Create frontend/src/app/(dashboard)/scraper/sources/page.tsx:
+- Table with all sources
+- Add/Edit source modal with form
+- Test scrape functionality
+- Toggle active/inactive
+
+## Phase 3: Content Generation
+
+### Task 3.1: Pydantic Schemas - Content
+Create schemas:
+- content_slot.py - ContentSlotResponse, SelectOptionRequest
+- post_option.py - PostOptionResponse, PostOptionUpdate
+
+### Task 3.2: Mock Content Generator
+Create backend/app/services/content_generator.py:
+- Stub for Claude API
+- generate_post_options() returns 2 realistic bilingual options
+- Realistic Dubai real estate content
+- Include sample hashtags and image prompts
+
+### Task 3.3: Mock Image Generator
+Create backend/app/services/image_generator.py:
+- Stub for Gemini/Nano Banana Pro API
+- generate_image() returns placeholder image URLs
+- Use placehold.co or similar service
+
+### Task 3.4: Mock Market Analyzer
+Create backend/app/services/market_analyzer.py:
+- Stub for Claude API market analysis
+- Return mock market data and predictions
+- Realistic Dubai real estate statistics
+
+### Task 3.5: Content Slots API
+Create backend/app/api/content_slots.py:
+- GET /api/content-slots - List with filters
+- GET /api/content-slots/today - Today's 5 slots
+- GET /api/content-slots/{id} - Slot detail with options
+- POST /api/content-slots/{id}/select - Select option
+- POST /api/content-slots/{id}/skip - Skip slot
+- POST /api/content-slots/{id}/regenerate - Regenerate options
+
+### Task 3.6: Post Options API
+Create backend/app/api/post_options.py:
+- GET /api/post-options/{id} - Option detail
+- PATCH /api/post-options/{id} - Edit option
+- POST /api/post-options/{id}/regenerate-image - Regenerate image
+
+### Task 3.7: Generate Content Task
+Create backend/app/tasks/generate_content_task.py:
+- generate_all_slots() - Create 5 daily slots
+- Generate 2 options per slot using mock services
+- Set approval deadlines
+
+### Task 3.8: Content Queue Page
+Create frontend/src/app/(dashboard)/content-queue/page.tsx:
+- 5 time slot cards arranged vertically
+- Each shows time, content type badge, status
+- Option A/B preview cards when ready
+- Countdown timer to deadline
+- Select/Edit/Skip buttons
+
+### Task 3.9: Time Slot Card Component
+Create frontend/src/components/content-queue/time-slot-card.tsx:
+- Time display with Dubai timezone
+- Content type badge (Real Estate / Dubai Trending)
+- Status indicator (color-coded)
+- Post option previews
+- Action buttons
+
+### Task 3.10: Post Option Card Component
+Create frontend/src/components/content-queue/post-option-card.tsx:
+- Title preview
+- Body excerpt
+- Image thumbnail
+- Quality score badge
+- Select button
+
+### Task 3.11: Countdown Timer Component
+Create frontend/src/components/content-queue/countdown-timer.tsx:
+- Time remaining display
+- Color changes (green → amber → red)
+- Auto-refresh
+
+### Task 3.12: Content Slot Detail Page
+Create frontend/src/app/(dashboard)/content-queue/[slotId]/page.tsx:
+- Side-by-side Option A/B comparison
+- Full post preview with Telegram styling
+- Generated image preview
+- Source articles list
+- Action bar (Select A/B, Regenerate, Skip)
+
+### Task 3.13: Post Preview Component
+Create frontend/src/components/content-queue/post-preview.tsx:
+- Telegram-styled message bubble
+- Render title, body, hashtags
+- Image display
+- EN/RU tabs
+
+### Task 3.14: Post Editor Component
+Create frontend/src/components/content-queue/post-editor.tsx:
+- Rich text editor (or simple textarea for MVP)
+- EN/RU tabs
+- Character count
+- Image preview with regenerate button
+- Hashtag editing
+
+## Phase 4: Publishing Pipeline
+
+### Task 4.1: Mock Telegram Publisher
+Create backend/app/services/telegram_publisher.py:
+- Stub for Telegram Bot API
+- publish_post() logs action, returns fake message ID
+- Log what would be published
+
+### Task 4.2: Mock Auto Selector
+Create backend/app/services/auto_selector.py:
+- Stub for Claude API selection
+- select_best_option() returns A or B randomly
+- Log selection reasoning (mock)
+
+### Task 4.3: Mock Notification Service
+Create backend/app/services/notification.py:
+- Stub for Telegram DM notifications
+- Log notifications to console
+
+### Task 4.4: Auto Select Task
+Create backend/app/tasks/auto_select_task.py:
+- auto_select_if_needed() for each slot
+- Check if slot has selection
+- Use mock auto selector if no human selection
+
+### Task 4.5: Publish Task
+Create backend/app/tasks/publish_task.py:
+- publish_slot() task
+- Get selected option
+- Call mock publisher
+- Create PublishedPost record
+- Update slot status
+
+### Task 4.6: Full Celery Beat Schedule
+Update celery_app.py with complete schedule:
+- 04:00 - Morning scrape
+- 05:00 - Generate all slots
+- 07:30, 11:30, 15:30, 19:30, 23:30 - Auto-select tasks
+- 08:00, 12:00, 16:00, 20:00, 00:00 - Publish tasks
+- Hourly analytics update
+- Daily channel snapshot
+
+## Phase 5: Analytics & History
+
+### Task 5.1: Pydantic Schemas - Analytics
+Create schemas:
+- analytics.py - OverviewStats, PostPerformance, EngagementTrend, CategoryBreakdown
+- dashboard.py - DashboardStats, TodaySchedule
+
+### Task 5.2: Mock Analytics Collector
+Create backend/app/services/analytics_collector.py:
+- Stub for Telegram analytics
+- Generate realistic mock metrics
+- Random views, engagement rates
+
+### Task 5.3: Analytics API
+Create backend/app/api/analytics.py:
+- GET /api/analytics/overview
+- GET /api/analytics/posts
+- GET /api/analytics/engagement
+- GET /api/analytics/categories
+- GET /api/analytics/growth
+- GET /api/analytics/top-posts
+- GET /api/analytics/best-times
+
+### Task 5.4: Published Posts API
+Create backend/app/api/published_posts.py:
+- GET /api/published-posts - List with filters
+- GET /api/published-posts/{id} - Detail with analytics
+- GET /api/published-posts/search - Search
+
+### Task 5.5: Dashboard API
+Create backend/app/api/dashboard.py:
+- GET /api/dashboard/stats
+- GET /api/dashboard/today
+- GET /api/dashboard/pending
+
+### Task 5.6: Analytics Page
+Create frontend/src/app/(dashboard)/analytics/page.tsx:
+- Top KPI cards (subscribers, posts, avg views, engagement)
+- Subscriber growth chart
+- Engagement over time chart
+- Category performance chart
+- Posting time heatmap
+- Top posts table
+
+### Task 5.7: Analytics Chart Components
+Create frontend/src/components/analytics/:
+- engagement-chart.tsx - Line chart with Recharts
+- growth-chart.tsx - Area chart for subscriber growth
+- category-breakdown.tsx - Bar chart by category
+- time-heatmap.tsx - Grid showing best posting times
+- top-posts.tsx - Table of top performing posts
+
+### Task 5.8: Published Posts Page
+Create frontend/src/app/(dashboard)/posts/page.tsx:
+- Table with date, title, category, views, engagement
+- Filters for date range, category, language
+- Search functionality
+- Click to view detail
+
+### Task 5.9: Post Detail Page
+Create frontend/src/app/(dashboard)/posts/[id]/page.tsx:
+- Post preview (Telegram-styled)
+- Performance metrics panel
+- Views growth chart
+- Source info
+
+### Task 5.10: Calendar Page
+Create frontend/src/app/(dashboard)/calendar/page.tsx:
+- Monthly calendar view
+- Each day shows 5 colored dots for slots
+- Status colors (green=published, blue=approved, yellow=pending, gray=not generated)
+- Click day to see details
+- Week view toggle
+
+### Task 5.11: Dashboard Components
+Create frontend/src/components/dashboard/:
+- stats-cards.tsx - 4 KPI cards
+- today-schedule.tsx - Timeline of 5 slots
+- pending-actions.tsx - Alert list
+- quick-actions.tsx - Action buttons
+
+### Task 5.12: Update Dashboard Page
+Update the dashboard page with real components:
+- Connect to dashboard API
+- Use stats-cards, today-schedule, pending-actions components
+- Auto-refresh every 30 seconds
+
+## Phase 6: Configuration & Polish
+
+### Task 6.1: Pydantic Schemas - Templates
+Create schemas:
+- post_template.py - TemplateCreate, TemplateUpdate, TemplateResponse
+
+### Task 6.2: Templates API
+Create backend/app/api/templates.py:
+- GET /api/templates - List all
+- POST /api/templates - Create
+- GET /api/templates/{id} - Detail
+- PATCH /api/templates/{id} - Update
+- DELETE /api/templates/{id} - Delete
+- POST /api/templates/{id}/test - Test template
+
+### Task 6.3: Settings API
+Create backend/app/api/settings.py:
+- GET /api/settings - Get all (masked for encrypted)
+- PATCH /api/settings - Batch update
+- POST /api/settings/test-connection - Test API connectivity
+
+### Task 6.4: Users API
+Create backend/app/api/users.py (admin only):
+- GET /api/users - List all
+- POST /api/users - Create
+- PATCH /api/users/{id} - Update
+- DELETE /api/users/{id} - Deactivate
+
+### Task 6.5: Templates List Page
+Create frontend/src/app/(dashboard)/templates/page.tsx:
+- Template cards with name, category, tone
+- Add new template button
+- Toggle active/inactive
+
+### Task 6.6: Template Editor Page
+Create frontend/src/app/(dashboard)/templates/[id]/page.tsx:
+- Name, category, tone, max_length fields
+- Prompt template textarea
+- Image prompt template textarea
+- Example output section
+- Test template button
+
+### Task 6.7: Settings Page
+Create frontend/src/app/(dashboard)/settings/page.tsx:
+- Tabs: API Keys, Telegram, Schedule, Content, Notifications, Team, System
+- API Keys: Masked inputs, test connection buttons
+- Telegram: Channel config, test message
+- Schedule: Edit posting times
+- Content: Min/max length, hashtag rules
+- Team: User list (admin only)
+
+### Task 6.8: Error Boundary
+Create frontend/src/components/error-boundary.tsx:
+- React error boundary component
+- Friendly error message
+- Retry button
+
+### Task 6.9: Loading Skeletons
+Create loading skeleton components for:
+- Table rows
+- Cards
+- Charts
+- Form fields
+
+### Task 6.10: Empty States
+Create empty state components:
+- No data available
+- No posts yet
+- No sources configured
+- With helpful CTAs
+
+### Task 6.11: Toast Notifications
+Set up Sonner toast notifications:
+- Success, error, info, warning variants
+- Use throughout the app for feedback
+
+### Task 6.12: Role-Based UI
+Implement role-based visibility:
+- Admin: sees everything
+- SMM: content queue, analytics, posts (no settings/sources management)
+- Viewer: dashboard and analytics only
+- Hide menu items and routes based on role
+
+### Task 6.13: API Error Handling
+Improve error handling:
+- Consistent error responses from API
+- Frontend error display
+- Retry logic for failed requests
+
+### Task 6.14: Final Integration Testing
+Test all flows end-to-end:
+- Login as admin/SMM/viewer
+- Run scraper
+- Generate content
+- Select/edit/publish posts
+- View analytics
+- Manage templates/settings
