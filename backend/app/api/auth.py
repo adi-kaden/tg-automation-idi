@@ -28,7 +28,7 @@ async def setup_admin(db: DBSession):
     admin = User(
         email="admin@idigov.com",
         hashed_password=hash_password("Admin123!"),
-        full_name="Admin User",
+        name="Admin User",
         role="admin",
         is_active=True,
     )
