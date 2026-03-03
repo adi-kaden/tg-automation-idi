@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 def get_async_session():
     """Create a fresh async session for each task."""
-    engine = create_async_engine(settings.database_url, pool_size=3, pool_pre_ping=True)
+    engine = create_async_engine(settings.async_database_url, pool_size=3, pool_pre_ping=True)
     return async_sessionmaker(engine, expire_on_commit=False)
 
 

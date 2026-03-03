@@ -27,7 +27,7 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 # Create separate engine for Celery tasks (runs in sync context)
-engine = create_async_engine(settings.database_url, pool_size=3)
+engine = create_async_engine(settings.async_database_url, pool_size=3)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
