@@ -2,37 +2,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
 
 from app.config import get_settings
 from app.api import api_router
-from app.database import AsyncSessionLocal
-from app.models.user import User
-from app.utils.security import hash_password
 
 settings = get_settings()
-
-
-async def seed_admin_user():
-    """Create admin user if it doesn't exist."""
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(User).where(User.email == "admin@idigov.com")
-        )
-        existing = result.scalar_one_or_none()
-        if existing:
-            print("Admin user already exists")
-            return
-        admin = User(
-            email="admin@idigov.com",
-            hashed_password=hash_password("Admin123!"),
-            full_name="Admin User",
-            role="admin",
-            is_active=True,
-        )
-        db.add(admin)
-        await db.commit()
-        print("Admin user created: admin@idigov.com / Admin123!")
 
 
 @asynccontextmanager
@@ -40,7 +14,6 @@ async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
     print("TG Content Engine API starting up...")
-    await seed_admin_user()
     yield
     # Shutdown
     print("TG Content Engine API shutting down...")
