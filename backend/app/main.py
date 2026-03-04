@@ -50,39 +50,35 @@ async def root():
 
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+async def health_check(debug: bool = False):
+    """Health check endpoint with optional debug info."""
+    result = {"status": "healthy"}
 
+    if debug:
+        import redis
+        from app.tasks.celery_app import celery_app
 
-@app.get("/debug/celery")
-async def debug_celery():
-    """Debug endpoint to check Celery/Redis connectivity."""
-    import redis
-    from app.tasks.celery_app import celery_app
+        result["redis_url_set"] = bool(settings.redis_url and settings.redis_url != "redis://localhost:6379/0")
+        result["redis_url_prefix"] = settings.redis_url[:30] + "..." if settings.redis_url else None
 
-    result = {
-        "redis_url_configured": bool(settings.redis_url),
-        "redis_url_prefix": settings.redis_url[:20] + "..." if settings.redis_url else None,
-    }
+        # Test Redis
+        try:
+            r = redis.from_url(settings.redis_url)
+            r.ping()
+            result["redis_ok"] = True
+        except Exception as e:
+            result["redis_ok"] = False
+            result["redis_error"] = str(e)[:100]
 
-    # Test Redis connection
-    try:
-        r = redis.from_url(settings.redis_url)
-        r.ping()
-        result["redis_connected"] = True
-    except Exception as e:
-        result["redis_connected"] = False
-        result["redis_error"] = str(e)
-
-    # Check Celery worker status
-    try:
-        inspect = celery_app.control.inspect()
-        active = inspect.active()
-        result["celery_workers_active"] = active is not None and len(active) > 0
-        result["celery_workers"] = list(active.keys()) if active else []
-    except Exception as e:
-        result["celery_workers_active"] = False
-        result["celery_error"] = str(e)
+        # Check Celery workers
+        try:
+            inspect = celery_app.control.inspect(timeout=2.0)
+            active = inspect.active()
+            result["celery_workers"] = list(active.keys()) if active else []
+        except Exception as e:
+            result["celery_workers"] = []
+            result["celery_error"] = str(e)[:100]
 
     return result
+
+
