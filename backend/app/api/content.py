@@ -310,10 +310,8 @@ async def publish_slot(
         except json.JSONDecodeError:
             hashtags = []
 
-    # Create post content
+    # Create post content (Russian only)
     content = PostContent(
-        title_en=option.title_en,
-        body_en=option.body_en,
         title_ru=option.title_ru,
         body_ru=option.body_ru,
         hashtags=hashtags,
@@ -332,15 +330,15 @@ async def publish_slot(
             channel_id=publish_result.channel_id,
         )
 
-    # Create PublishedPost record
+    # Create PublishedPost record (Russian only)
     published_post = PublishedPost(
         slot_id=slot_id,
         option_id=option.id,
-        posted_title=option.title_en,
-        posted_body=option.body_en,
-        posted_language="en",
+        posted_title=option.title_ru,
+        posted_body=option.body_ru,
+        posted_language="ru",
         posted_image_url=option.image_url,
-        telegram_message_id=publish_result.message_id_en,
+        telegram_message_id=publish_result.message_id_ru,
         telegram_channel_id=publish_result.channel_id,
         selected_by=slot.selected_by or "human",
         selected_by_user_id=slot.selected_by_user_id,
@@ -638,15 +636,13 @@ async def test_telegram_publish(
 ):
     """
     Send a test post to the Telegram channel to verify publishing works.
-    This is for testing purposes only and will post a test message.
+    This is for testing purposes only and will post a Russian test message.
     """
     try:
         publisher = TelegramPublisher()
 
-        # Create test content
+        # Create test content (Russian only)
         content = PostContent(
-            title_en="🔧 System Test Post",
-            body_en="This is an automated test post from IDIGOV Content Engine.\n\nIf you see this, Telegram publishing is working correctly!\n\n✅ Connection verified",
             title_ru="🔧 Тестовое сообщение",
             body_ru="Это автоматическое тестовое сообщение от IDIGOV Content Engine.\n\nЕсли вы видите это, публикация в Telegram работает корректно!\n\n✅ Соединение подтверждено",
             hashtags=["#IDIGOV", "#Test"],
@@ -659,7 +655,6 @@ async def test_telegram_publish(
 
         return {
             "success": result.success,
-            "message_id_en": result.message_id_en,
             "message_id_ru": result.message_id_ru,
             "channel_id": result.channel_id,
             "error": result.error,

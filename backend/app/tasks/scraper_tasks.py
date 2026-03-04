@@ -275,4 +275,5 @@ async def _save_article(
     )
 
     db.add(article)
+    await db.commit()
     return True

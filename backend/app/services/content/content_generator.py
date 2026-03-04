@@ -19,26 +19,27 @@ settings = get_settings()
 @dataclass
 class GeneratedPost:
     """Result of content generation."""
-    title_en: str
-    body_en: str
     title_ru: str
     body_ru: str
     hashtags: list[str]
     image_prompt: str
     category: str
     quality_score: float
+    # Keep EN fields for backwards compatibility (empty strings)
+    title_en: str = ""
+    body_en: str = ""
 
 
-SYSTEM_PROMPT = """You are an expert social media content creator for IDIGOV Real Estate, a premium real estate company in Dubai, UAE. You create engaging Telegram posts about Dubai real estate, market trends, and lifestyle news.
+SYSTEM_PROMPT = """You are an expert social media content creator for IDIGOV Real Estate, a premium real estate company in Dubai, UAE. You create engaging Telegram posts in Russian for the Russian-speaking audience of Dubai property investors.
 
 Your posts should:
 1. Be informative yet engaging
-2. Appeal to property investors, expatriates, and Dubai enthusiasts
-3. Use a professional but approachable tone
+2. Appeal to Russian-speaking property investors and expatriates in Dubai
+3. Use a professional but approachable tone in Russian
 4. Include relevant emojis sparingly (1-3 per post)
 5. Be concise - ideal for Telegram reading
 
-IMPORTANT: Generate content in BOTH English and Russian. The Russian audience is a significant segment of Dubai property investors."""
+IMPORTANT: All content must be written in Russian. The target audience is Russian-speaking investors and business people interested in Dubai real estate."""
 
 
 def _build_generation_prompt(
@@ -86,7 +87,7 @@ Max Length: {template.get('max_length_chars', 1500)} characters
 Example style: {template.get('example_output', 'N/A')}
 """
 
-    return f"""Based on the following news articles, create a compelling Telegram post for IDIGOV Real Estate's channel.
+    return f"""Based on the following news articles, create a compelling Telegram post in Russian for IDIGOV Real Estate's channel.
 
 Content Type: {content_type}
 Focus Area: {guidance}
@@ -96,20 +97,16 @@ Category: {category} ({topic_focus})
 SOURCE ARTICLES:
 {articles_text}
 
-Generate a Telegram post with the following structure:
+Generate a Telegram post with the following structure (ALL IN RUSSIAN):
 
-1. TITLE (English): A catchy, engaging headline (max 100 chars)
-2. BODY (English): The main post content (400-800 chars). Include key facts, insights, and a subtle call-to-action if relevant.
-3. TITLE (Russian): Translation of the English title, adapted for Russian-speaking audience
-4. BODY (Russian): Translation of the English body, adapted for Russian-speaking audience
-5. HASHTAGS: 3-5 relevant hashtags (in English)
-6. IMAGE_PROMPT: A detailed prompt for generating an accompanying image (describe the visual concept, style, colors - suitable for a real estate/Dubai context)
-7. QUALITY_SCORE: Rate the newsworthiness and engagement potential (0.0-1.0)
+1. TITLE (Russian): A catchy, engaging headline in Russian (max 100 chars)
+2. BODY (Russian): The main post content in Russian (400-800 chars). Include key facts, insights, and a subtle call-to-action if relevant.
+3. HASHTAGS: 3-5 relevant hashtags (can be in English like #Dubai #RealEstate)
+4. IMAGE_PROMPT: A detailed prompt for generating an accompanying image (describe the visual concept, style, colors - suitable for a real estate/Dubai context)
+5. QUALITY_SCORE: Rate the newsworthiness and engagement potential (0.0-1.0)
 
 Respond in JSON format:
 {{
-    "title_en": "...",
-    "body_en": "...",
     "title_ru": "...",
     "body_ru": "...",
     "hashtags": ["#Dubai", "#RealEstate", ...],

@@ -67,16 +67,13 @@ class AutoSelector:
         if len(options) == 1:
             return (options[0]["option_label"], "Only one option available", 1.0)
 
-        # Format options for comparison
+        # Format options for comparison (Russian only)
         options_text = ""
         for opt in options:
             options_text += f"""
 === OPTION {opt['option_label']} ===
-Title (EN): {opt['title_en']}
-Body (EN): {opt['body_en'][:500]}...
-
-Title (RU): {opt['title_ru']}
-Body (RU): {opt['body_ru'][:500]}...
+Заголовок: {opt['title_ru']}
+Текст: {opt['body_ru'][:500]}...
 
 Hashtags: {opt.get('hashtags', [])}
 Image Concept: {opt.get('image_prompt', 'N/A')[:200]}
@@ -84,14 +81,14 @@ AI Quality Score: {opt.get('ai_quality_score', 'N/A')}
 
 """
 
-        prompt = f"""Compare these Telegram post options and select the best one for publication.
+        prompt = f"""Compare these Russian Telegram post options and select the best one for publication.
 
 Content Type: {content_type}
 Scheduled Time: {slot_time}
 
 {options_text}
 
-Analyze each option and select the best one for our audience of property investors and Dubai enthusiasts.
+Analyze each option and select the best one for our Russian-speaking audience of property investors and Dubai enthusiasts.
 
 Respond in JSON format:
 {{

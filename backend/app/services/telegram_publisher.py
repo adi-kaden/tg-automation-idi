@@ -31,21 +31,22 @@ class PublishResult:
 
 @dataclass
 class PostContent:
-    """Content to be published."""
-    title_en: str
-    body_en: str
+    """Content to be published (Russian-only)."""
     title_ru: str
     body_ru: str
     hashtags: list[str]
     image_url: Optional[str] = None
     image_local_path: Optional[str] = None
+    # Keep EN fields for backwards compatibility (empty strings)
+    title_en: str = ""
+    body_en: str = ""
 
 
 class TelegramPublisher:
     """
     Publish posts to Telegram channel.
 
-    Handles bilingual content (EN/RU), image uploads, and retry logic.
+    Handles Russian content, image uploads, and retry logic.
     """
 
     MAX_RETRIES = 3
@@ -211,76 +212,48 @@ class TelegramPublisher:
     async def publish_post(
         self,
         content: PostContent,
-        publish_both_languages: bool = True,
+        publish_both_languages: bool = False,  # Deprecated, kept for compatibility
     ) -> PublishResult:
         """
-        Publish a post to the Telegram channel.
-
-        Posts are sent in both languages by default (EN first, then RU).
+        Publish a post to the Telegram channel (Russian only).
 
         Args:
-            content: PostContent with bilingual content and image
-            publish_both_languages: If True, posts both EN and RU versions
+            content: PostContent with Russian content and optional image
+            publish_both_languages: Deprecated, ignored (always publishes Russian only)
 
         Returns:
-            PublishResult with message IDs and status
+            PublishResult with message ID and status
         """
-        logger.info(f"Publishing post to channel {self.channel_id}")
+        logger.info(f"Publishing Russian post to channel {self.channel_id}")
 
         try:
-            # Format English version
-            text_en = self._format_post_html(
-                title=content.title_en,
-                body=content.body_en,
+            # Format Russian version
+            text_ru = self._format_post_html(
+                title=content.title_ru,
+                body=content.body_ru,
                 hashtags=content.hashtags,
-                language="en",
+                language="ru",
             )
 
-            # Send English version with image
-            message_id_en = await self._send_photo_message(
-                text=text_en,
+            # Send Russian version with image
+            message_id_ru = await self._send_photo_message(
+                text=text_ru,
                 image_url=content.image_url,
                 image_local_path=content.image_local_path,
             )
 
-            if not message_id_en:
+            if not message_id_ru:
                 return PublishResult(
                     success=False,
-                    error="Failed to publish English version",
+                    error="Failed to publish Russian post",
                     channel_id=self.channel_id,
                 )
 
-            logger.info(f"Published EN version, message_id={message_id_en}")
-
-            message_id_ru = None
-            if publish_both_languages:
-                # Small delay between posts
-                await asyncio.sleep(1)
-
-                # Format Russian version
-                text_ru = self._format_post_html(
-                    title=content.title_ru,
-                    body=content.body_ru,
-                    hashtags=content.hashtags,
-                    language="ru",
-                )
-
-                # Send Russian version (without image to avoid duplication)
-                message_id_ru = await self._send_with_retry(
-                    self.bot.send_message,
-                    chat_id=self.channel_id,
-                    text=text_ru,
-                    parse_mode=ParseMode.HTML,
-                )
-
-                if message_id_ru:
-                    logger.info(f"Published RU version, message_id={message_id_ru}")
-                else:
-                    logger.warning("Failed to publish Russian version")
+            logger.info(f"Published RU post, message_id={message_id_ru}")
 
             return PublishResult(
                 success=True,
-                message_id_en=message_id_en,
+                message_id_en=None,  # No English version
                 message_id_ru=message_id_ru,
                 channel_id=self.channel_id,
             )

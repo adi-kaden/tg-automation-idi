@@ -189,11 +189,22 @@ def generate_content_for_slot(self, slot_id: str):
             slot = result.scalar_one_or_none()
 
             for opt_data in options_to_save:
+                # FIRST: Mark articles as used to prevent race conditions
+                for aid in opt_data["source_ids"]:
+                    art_result = await db.execute(
+                        select(ScrapedArticle).where(ScrapedArticle.id == UUID(aid))
+                    )
+                    article = art_result.scalar_one_or_none()
+                    if article:
+                        article.is_used = True
+                await db.flush()  # Lock articles first
+
+                # THEN: Create PostOption (Russian-only, EN fields empty)
                 option = PostOption(
                     slot_id=slot.id,
                     option_label=opt_data["label"],
-                    title_en=opt_data["post"].title_en,
-                    body_en=opt_data["post"].body_en,
+                    title_en="",  # Empty for Russian-only channel
+                    body_en="",   # Empty for Russian-only channel
                     title_ru=opt_data["post"].title_ru,
                     body_ru=opt_data["post"].body_ru,
                     hashtags=json.dumps(opt_data["post"].hashtags),
@@ -210,7 +221,7 @@ def generate_content_for_slot(self, slot_id: str):
                 await db.flush()
                 options_created.append(str(option.id))
 
-                # Mark articles as used
+                # Update article references with the post ID
                 for aid in opt_data["source_ids"]:
                     art_result = await db.execute(
                         select(ScrapedArticle).where(ScrapedArticle.id == UUID(aid))
@@ -218,7 +229,7 @@ def generate_content_for_slot(self, slot_id: str):
                     article = art_result.scalar_one_or_none()
                     if article:
                         article.used_in_post_id = option.id
-                        article.is_used = True
+                await db.flush()
 
             # Update slot status
             if options_created:
@@ -512,10 +523,10 @@ def publish_scheduled_slot(self, slot_id: str = None):
                     except json.JSONDecodeError:
                         hashtags = []
 
-                # Create post content
+                # Create post content (Russian-only)
                 content = PostContent(
-                    title_en=option.title_en,
-                    body_en=option.body_en,
+                    title_en="",  # Empty for Russian-only channel
+                    body_en="",   # Empty for Russian-only channel
                     title_ru=option.title_ru,
                     body_ru=option.body_ru,
                     hashtags=hashtags,
@@ -528,15 +539,15 @@ def publish_scheduled_slot(self, slot_id: str = None):
                 publish_result = await publisher.publish_post(content)
 
                 if publish_result.success:
-                    # Create PublishedPost record
+                    # Create PublishedPost record (Russian-only)
                     published_post = PublishedPost(
                         slot_id=slot.id,
                         option_id=option.id,
-                        posted_title=option.title_en,
-                        posted_body=option.body_en,
-                        posted_language="en",
+                        posted_title=option.title_ru,
+                        posted_body=option.body_ru,
+                        posted_language="ru",
                         posted_image_url=option.image_url,
-                        telegram_message_id=publish_result.message_id_en,
+                        telegram_message_id=publish_result.message_id_ru,
                         telegram_channel_id=publish_result.channel_id,
                         selected_by=slot.selected_by or "ai",
                         selected_by_user_id=slot.selected_by_user_id,
