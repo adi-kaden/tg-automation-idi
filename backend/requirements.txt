@@ -14,9 +14,7 @@ greenlet==3.1.0
 celery[redis]==5.4.0
 redis==5.1.1
 
-# Process management
-setuptools>=70.0.0
-supervisor==4.2.5
+# Process management (using bash script instead)
 
 # Validation
 pydantic==2.9.2
