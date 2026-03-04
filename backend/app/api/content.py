@@ -630,3 +630,47 @@ async def send_test_notification(
             "success": False,
             "message": str(e),
         }
+
+
+@router.post("/telegram/test-publish")
+async def test_telegram_publish(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Send a test post to the Telegram channel to verify publishing works.
+    This is for testing purposes only and will post a test message.
+    """
+    try:
+        publisher = TelegramPublisher()
+
+        # Create test content
+        content = PostContent(
+            title_en="🔧 System Test Post",
+            body_en="This is an automated test post from IDIGOV Content Engine.\n\nIf you see this, Telegram publishing is working correctly!\n\n✅ Connection verified",
+            title_ru="🔧 Тестовое сообщение",
+            body_ru="Это автоматическое тестовое сообщение от IDIGOV Content Engine.\n\nЕсли вы видите это, публикация в Telegram работает корректно!\n\n✅ Соединение подтверждено",
+            hashtags=["#IDIGOV", "#Test"],
+            image_url=None,
+            image_local_path=None,
+        )
+
+        # Publish to Telegram
+        result = await publisher.publish_post(content)
+
+        return {
+            "success": result.success,
+            "message_id_en": result.message_id_en,
+            "message_id_ru": result.message_id_ru,
+            "channel_id": result.channel_id,
+            "error": result.error,
+        }
+    except ValueError as e:
+        return {
+            "success": False,
+            "message": str(e),
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Unexpected error: {str(e)}",
+        }
