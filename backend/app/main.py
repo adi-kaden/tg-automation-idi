@@ -58,12 +58,13 @@ async def health_check(debug: bool = False):
         import redis
         from app.tasks.celery_app import celery_app
 
-        result["redis_url_set"] = bool(settings.redis_url and settings.redis_url != "redis://localhost:6379/0")
-        result["redis_url_prefix"] = settings.redis_url[:30] + "..." if settings.redis_url else None
+        redis_url = settings.effective_redis_url
+        result["redis_url_set"] = bool(redis_url and redis_url != "redis://localhost:6379/0")
+        result["redis_url_prefix"] = redis_url[:30] + "..." if redis_url else None
 
         # Test Redis
         try:
-            r = redis.from_url(settings.redis_url)
+            r = redis.from_url(redis_url)
             r.ping()
             result["redis_ok"] = True
         except Exception as e:

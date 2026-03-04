@@ -25,8 +25,16 @@ class Settings(BaseSettings):
             return url.replace("+asyncpg", "", 1)
         return url
 
-    # Redis
+    # Redis - Railway may use REDIS_URL or REDIS_PRIVATE_URL
     redis_url: str = "redis://localhost:6379/0"
+    redis_private_url: Optional[str] = None
+
+    @property
+    def effective_redis_url(self) -> str:
+        """Get the effective Redis URL, preferring private URL if available."""
+        if self.redis_private_url:
+            return self.redis_private_url
+        return self.redis_url
 
     # Authentication
     jwt_secret_key: str = "your-super-secret-jwt-key-change-in-production"

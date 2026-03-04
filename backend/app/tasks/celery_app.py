@@ -11,8 +11,8 @@ settings = get_settings()
 # Create Celery app
 celery_app = Celery(
     "tg_content_engine",
-    broker=settings.redis_url,
-    backend=settings.redis_url,
+    broker=settings.effective_redis_url,
+    backend=settings.effective_redis_url,
     include=[
         "app.tasks.scraper_tasks",
         "app.tasks.content_tasks",
