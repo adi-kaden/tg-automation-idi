@@ -257,6 +257,105 @@ async def trigger_scrape(
     )
 
 
+@router.post("/sources/{source_id}/run-sync")
+async def trigger_scrape_sync(
+    source_id: UUID,
+    db: DBSession,
+    current_user: SMMUser,
+):
+    """
+    Run scrape synchronously (bypass Celery for testing).
+    """
+    from datetime import datetime
+    from app.services.scraper import (
+        RSSScraper,
+        WebsiteScraper,
+        RateLimiter,
+        calculate_relevance_score,
+        calculate_engagement_potential,
+    )
+
+    result = await db.execute(
+        select(ScrapeSource).where(ScrapeSource.id == source_id)
+    )
+    source = result.scalar_one_or_none()
+
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    # Create scrape run
+    scrape_run = ScrapeRun(
+        source_id=source.id,
+        run_type="manual_sync",
+        status="running",
+    )
+    db.add(scrape_run)
+    await db.commit()
+    await db.refresh(scrape_run)
+
+    try:
+        rate_limiter = RateLimiter()
+        if source.source_type == "rss":
+            scraper = RSSScraper(source, rate_limiter)
+        else:
+            scraper = WebsiteScraper(source, rate_limiter)
+
+        items = await scraper.scrape()
+        await scraper.close()
+
+        articles_new = 0
+        for item in items:
+            # Check for duplicate
+            existing = await db.execute(
+                select(ScrapedArticle).where(ScrapedArticle.url == item.url)
+            )
+            if existing.scalar_one_or_none():
+                continue
+
+            # Save article
+            published_at = item.published_at
+            if published_at and published_at.tzinfo is not None:
+                published_at = published_at.replace(tzinfo=None)
+
+            article = ScrapedArticle(
+                source_id=source.id,
+                scrape_run_id=scrape_run.id,
+                url=item.url,
+                title=item.title,
+                summary=item.summary,
+                full_text=item.full_text,
+                image_url=item.image_url,
+                author=item.author,
+                published_at=published_at,
+                category=source.category,
+                relevance_score=calculate_relevance_score(item, source.category),
+                engagement_potential=calculate_engagement_potential(item),
+            )
+            db.add(article)
+            await db.commit()
+            articles_new += 1
+
+        # Update run status
+        scrape_run.status = "completed"
+        scrape_run.articles_found = len(items)
+        scrape_run.articles_new = articles_new
+        scrape_run.completed_at = datetime.utcnow()
+        source.last_scraped_at = datetime.utcnow()
+        await db.commit()
+
+        return {
+            "status": "completed",
+            "articles_found": len(items),
+            "articles_new": articles_new,
+        }
+
+    except Exception as e:
+        scrape_run.status = "failed"
+        scrape_run.error_message = str(e)[:500]
+        await db.commit()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ========== Run Endpoints ==========
 
 
