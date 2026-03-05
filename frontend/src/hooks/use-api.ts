@@ -192,6 +192,18 @@ export function useToggleSource() {
   });
 }
 
+export function useScraperArticles(params?: {
+  page?: number;
+  per_page?: number;
+  category?: string;
+  is_used?: boolean;
+}) {
+  return useQuery({
+    queryKey: queryKeys.scraper.articles(params),
+    queryFn: () => api.scraper.getArticles(params),
+  });
+}
+
 // ==================== Analytics Hooks ====================
 
 export function useAnalyticsSummary(days = 7) {

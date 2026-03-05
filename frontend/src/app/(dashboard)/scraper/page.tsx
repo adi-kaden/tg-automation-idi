@@ -1,6 +1,7 @@
 'use client';
 
-import { Play, RefreshCw, CheckCircle2, XCircle, Clock, ExternalLink, Loader2, AlertCircle } from 'lucide-react';
+import Link from 'next/link';
+import { Play, RefreshCw, CheckCircle2, XCircle, Clock, ExternalLink, Loader2, AlertCircle, FileText, ArrowRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -105,7 +106,7 @@ export default function ScraperPage() {
   return (
     <div className="space-y-6">
       {/* Status Overview */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-slate-600">Active Sources</CardTitle>
@@ -145,6 +146,23 @@ export default function ScraperPage() {
             <p className="text-xs text-slate-500">healthy sources</p>
           </CardContent>
         </Card>
+
+        <Link href="/scraper/articles">
+          <Card className="cursor-pointer hover:bg-slate-50 transition-colors">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
+                <FileText className="h-4 w-4" />
+                View Articles
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-500">Browse all scraped articles</p>
+                <ArrowRight className="h-4 w-4 text-slate-400" />
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
       </div>
 
       {/* Sources List */}
