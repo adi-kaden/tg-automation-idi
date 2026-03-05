@@ -23,8 +23,14 @@ type LoginForm = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, isLoading, error, clearError } = useAuthStore();
+  const { login, isLoading, isHydrated, isAuthenticated, error, clearError } = useAuthStore();
   const [showPassword, setShowPassword] = useState(false);
+
+  // Redirect if already authenticated
+  if (isHydrated && isAuthenticated) {
+    router.push('/');
+    return null;
+  }
 
   const {
     register,
