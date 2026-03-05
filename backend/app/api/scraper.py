@@ -221,6 +221,25 @@ async def delete_source(
     return MessageResponse(message="Source deactivated successfully")
 
 
+@router.post("/run-now")
+async def run_all_scrapers(
+    db: DBSession,
+    current_user: SMMUser,
+):
+    """
+    Trigger a manual scrape for all active sources.
+    """
+    from app.tasks.scraper_tasks import scrape_all_sources
+
+    # Trigger Celery task
+    task = scrape_all_sources.delay(run_type="manual")
+
+    return {
+        "task_id": task.id,
+        "message": "Scrape all sources task queued",
+    }
+
+
 @router.post("/sources/{source_id}/run", response_model=ScrapeRunTrigger)
 async def trigger_scrape(
     source_id: UUID,
