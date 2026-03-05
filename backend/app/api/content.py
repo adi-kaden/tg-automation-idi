@@ -407,7 +407,9 @@ async def cleanup_old_slots(
     This helps clean up duplicate slots from testing.
     """
     from datetime import date as date_type
-    from sqlalchemy import delete, func
+    from sqlalchemy import func
+    from app.models.post_option import PostOption
+    from app.models.published_post import PublishedPost
 
     if keep_date:
         cutoff_date = date_type.fromisoformat(keep_date)
@@ -415,13 +417,39 @@ async def cleanup_old_slots(
         from zoneinfo import ZoneInfo
         cutoff_date = datetime.now(ZoneInfo("Asia/Dubai")).date()
 
-    # Delete slots where scheduled_at date is before cutoff_date
+    from sqlalchemy import delete as sql_delete
+
+    # Get old slot IDs
     result = await db.execute(
-        delete(ContentSlot).where(
+        select(ContentSlot.id).where(
             func.date(ContentSlot.scheduled_at) < cutoff_date
         )
     )
+    old_slot_ids = [row[0] for row in result.fetchall()]
+
+    if not old_slot_ids:
+        return {
+            "deleted_count": 0,
+            "cutoff_date": str(cutoff_date),
+            "message": "No old slots to delete"
+        }
+
+    # Delete related published posts first
+    await db.execute(
+        sql_delete(PublishedPost).where(PublishedPost.slot_id.in_(old_slot_ids))
+    )
+
+    # Delete related post options
+    await db.execute(
+        sql_delete(PostOption).where(PostOption.slot_id.in_(old_slot_ids))
+    )
+
+    # Now delete the slots
+    result = await db.execute(
+        sql_delete(ContentSlot).where(ContentSlot.id.in_(old_slot_ids))
+    )
     deleted_count = result.rowcount
+
     await db.commit()
 
     return {
