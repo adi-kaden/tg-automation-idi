@@ -248,7 +248,7 @@ export default function SlotDetailPage() {
             </Badge>
           )}
 
-          {slot.status === 'options_ready' && (
+          {(slot.status === 'options_ready' || slot.status === 'approved' || slot.status === 'failed') && (
             <Button variant="outline" onClick={handleRegenerate} disabled={regenerateMutation.isPending}>
               {regenerateMutation.isPending ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
