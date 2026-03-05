@@ -396,6 +396,41 @@ async def reset_slot(
     }
 
 
+@router.post("/slots/cleanup-old")
+async def cleanup_old_slots(
+    keep_date: str = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Delete slots older than the specified date (or older than today if not specified).
+    This helps clean up duplicate slots from testing.
+    """
+    from datetime import date as date_type
+    from sqlalchemy import delete, func
+
+    if keep_date:
+        cutoff_date = date_type.fromisoformat(keep_date)
+    else:
+        from zoneinfo import ZoneInfo
+        cutoff_date = datetime.now(ZoneInfo("Asia/Dubai")).date()
+
+    # Delete slots where scheduled_at date is before cutoff_date
+    result = await db.execute(
+        delete(ContentSlot).where(
+            func.date(ContentSlot.scheduled_at) < cutoff_date
+        )
+    )
+    deleted_count = result.rowcount
+    await db.commit()
+
+    return {
+        "deleted_count": deleted_count,
+        "cutoff_date": str(cutoff_date),
+        "message": f"Deleted {deleted_count} old slots"
+    }
+
+
 # ==================== Post Options ====================
 
 @router.get("/options/{option_id}", response_model=PostOptionResponse)
