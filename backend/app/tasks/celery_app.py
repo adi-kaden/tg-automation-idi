@@ -70,35 +70,41 @@ celery_app.conf.beat_schedule = {
     # ==================== Publishing Schedule ====================
     # Slot times in Dubai: 08:00, 12:00, 16:00, 20:00, 00:00
     # In UTC: 04:00, 08:00, 12:00, 16:00, 20:00
+    # Each task passes slot_number to identify exactly which slot to publish
 
     # Slot 1: 08:00 Dubai = 04:00 UTC
     "publish-slot-1": {
         "task": "app.tasks.content_tasks.publish_scheduled_slot",
         "schedule": crontab(hour=4, minute=0),
+        "kwargs": {"slot_number": 1},
     },
 
     # Slot 2: 12:00 Dubai = 08:00 UTC
     "publish-slot-2": {
         "task": "app.tasks.content_tasks.publish_scheduled_slot",
         "schedule": crontab(hour=8, minute=0),
+        "kwargs": {"slot_number": 2},
     },
 
     # Slot 3: 16:00 Dubai = 12:00 UTC
     "publish-slot-3": {
         "task": "app.tasks.content_tasks.publish_scheduled_slot",
         "schedule": crontab(hour=12, minute=0),
+        "kwargs": {"slot_number": 3},
     },
 
     # Slot 4: 20:00 Dubai = 16:00 UTC
     "publish-slot-4": {
         "task": "app.tasks.content_tasks.publish_scheduled_slot",
         "schedule": crontab(hour=16, minute=0),
+        "kwargs": {"slot_number": 4},
     },
 
     # Slot 5: 00:00 Dubai = 20:00 UTC
     "publish-slot-5": {
         "task": "app.tasks.content_tasks.publish_scheduled_slot",
         "schedule": crontab(hour=20, minute=0),
+        "kwargs": {"slot_number": 5},
     },
 
     # ==================== Analytics Collection ====================

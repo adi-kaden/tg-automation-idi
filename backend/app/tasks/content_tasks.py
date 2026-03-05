@@ -444,45 +444,54 @@ def check_and_auto_select(self):
 
 
 @celery_app.task(bind=True, max_retries=2)
-def publish_scheduled_slot(self, slot_id: str = None):
+def publish_scheduled_slot(self, slot_id: str = None, slot_number: int = None):
     """
     Publish an approved slot to Telegram.
 
-    If slot_id is None, finds and publishes slots scheduled for the current time.
+    Args:
+        slot_id: Direct slot UUID (for manual publish via API)
+        slot_number: Slot number 1-5 (for scheduled publish via Celery beat)
     """
-    logger.info(f"Publishing task triggered, slot_id={slot_id}")
+    logger.info(f"Publishing task triggered, slot_id={slot_id}, slot_number={slot_number}")
 
     async def _publish():
+        from sqlalchemy import func
         AsyncSessionLocal = get_async_session()
 
         async with AsyncSessionLocal() as db:
+            slots_to_publish = []
+
             if slot_id:
-                # Publish specific slot
+                # Publish specific slot by ID (manual publish)
                 result = await db.execute(
                     select(ContentSlot)
                     .options(selectinload(ContentSlot.options))
                     .where(ContentSlot.id == UUID(slot_id))
                 )
-                slots_to_publish = [result.scalar_one_or_none()]
-                slots_to_publish = [s for s in slots_to_publish if s is not None]
-            else:
-                # Find slots scheduled for current time window
+                slot = result.scalar_one_or_none()
+                if slot:
+                    slots_to_publish = [slot]
+            elif slot_number:
+                # Scheduled publish: find slot by slot_number + today's date
                 now = datetime.now(DUBAI_TZ)
-                # Check for slots within current hour that are approved but not published
-                from datetime import timedelta
-                window_start = now.replace(minute=0, second=0, microsecond=0)
-                window_end = window_start + timedelta(hours=1)
+                today = now.date()
 
                 result = await db.execute(
                     select(ContentSlot)
                     .options(selectinload(ContentSlot.options))
                     .where(
                         ContentSlot.status == "approved",
-                        ContentSlot.scheduled_at >= window_start,
-                        ContentSlot.scheduled_at < window_end,
+                        ContentSlot.slot_number == slot_number,
+                        func.date(ContentSlot.scheduled_at) == today,
                     )
                 )
-                slots_to_publish = list(result.scalars().all())
+                slot = result.scalar_one_or_none()
+                if slot:
+                    slots_to_publish = [slot]
+                    logger.info(f"Found slot {slot.id} for slot_number={slot_number} on {today}")
+            else:
+                logger.warning("No slot_id or slot_number provided, nothing to publish")
+                return {"published": 0, "message": "No slot identifier provided"}
 
             if not slots_to_publish:
                 logger.info("No approved slots to publish at this time")
@@ -497,6 +506,17 @@ def publish_scheduled_slot(self, slot_id: str = None):
 
             results = []
             for slot in slots_to_publish:
+                # IDEMPOTENCY CHECK: Skip if already published
+                if slot.published_post_id:
+                    logger.info(f"Skipping slot {slot.id} - already published (post_id={slot.published_post_id})")
+                    results.append({
+                        "slot_id": str(slot.id),
+                        "success": True,
+                        "skipped": True,
+                        "reason": "already_published",
+                    })
+                    continue
+
                 if slot.status != "approved":
                     logger.info(f"Skipping slot {slot.id} - status is {slot.status}")
                     continue
