@@ -130,9 +130,10 @@ async def get_today_schedule(
     today = now_dubai().date()
     now = now_dubai()
 
-    # Get today's slots
+    # Get today's slots with options eagerly loaded
     result = await db.execute(
         select(ContentSlot)
+        .options(selectinload(ContentSlot.options))
         .where(ContentSlot.scheduled_date == today)
         .order_by(ContentSlot.slot_number)
     )
