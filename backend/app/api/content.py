@@ -407,17 +407,17 @@ async def cleanup_old_slots(
     This helps clean up duplicate slots from testing.
     """
     from datetime import date as date_type
-    from sqlalchemy import func
+    from sqlalchemy import func, update
+    from sqlalchemy import delete as sql_delete
     from app.models.post_option import PostOption
     from app.models.published_post import PublishedPost
+    from app.models.scraped_article import ScrapedArticle
 
     if keep_date:
         cutoff_date = date_type.fromisoformat(keep_date)
     else:
         from zoneinfo import ZoneInfo
         cutoff_date = datetime.now(ZoneInfo("Asia/Dubai")).date()
-
-    from sqlalchemy import delete as sql_delete
 
     # Get old slot IDs
     result = await db.execute(
@@ -434,15 +434,37 @@ async def cleanup_old_slots(
             "message": "No old slots to delete"
         }
 
-    # Delete related published posts first
+    # Get option IDs for these slots
+    result = await db.execute(
+        select(PostOption.id).where(PostOption.slot_id.in_(old_slot_ids))
+    )
+    old_option_ids = [row[0] for row in result.fetchall()]
+
+    # Clear selected_option_id references in slots first
+    await db.execute(
+        update(ContentSlot)
+        .where(ContentSlot.id.in_(old_slot_ids))
+        .values(selected_option_id=None)
+    )
+
+    # Clear used_in_post_id references in articles
+    if old_option_ids:
+        await db.execute(
+            update(ScrapedArticle)
+            .where(ScrapedArticle.used_in_post_id.in_(old_option_ids))
+            .values(used_in_post_id=None)
+        )
+
+    # Delete related published posts
     await db.execute(
         sql_delete(PublishedPost).where(PublishedPost.slot_id.in_(old_slot_ids))
     )
 
     # Delete related post options
-    await db.execute(
-        sql_delete(PostOption).where(PostOption.slot_id.in_(old_slot_ids))
-    )
+    if old_option_ids:
+        await db.execute(
+            sql_delete(PostOption).where(PostOption.id.in_(old_option_ids))
+        )
 
     # Now delete the slots
     result = await db.execute(
