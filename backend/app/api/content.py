@@ -361,6 +361,41 @@ async def publish_slot(
     )
 
 
+@router.post("/slots/{slot_id}/reset")
+async def reset_slot(
+    slot_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Reset a slot back to pending status.
+    Useful for re-generating content or fixing incorrect status.
+    """
+    result = await db.execute(
+        select(ContentSlot).where(ContentSlot.id == slot_id)
+    )
+    slot = result.scalar_one_or_none()
+
+    if not slot:
+        raise HTTPException(status_code=404, detail="Slot not found")
+
+    old_status = slot.status
+    slot.status = "pending"
+    slot.selected_option_id = None
+    slot.selected_by = None
+    slot.selected_by_user_id = None
+    slot.published_post_id = None
+
+    await db.commit()
+
+    return {
+        "slot_id": str(slot_id),
+        "old_status": old_status,
+        "new_status": "pending",
+        "message": "Slot reset successfully"
+    }
+
+
 # ==================== Post Options ====================
 
 @router.get("/options/{option_id}", response_model=PostOptionResponse)
