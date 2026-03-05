@@ -14,13 +14,11 @@ import {
   Send,
   AlertCircle,
   CheckCircle2,
-  Globe,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -206,7 +204,18 @@ export default function SlotDetailPage() {
     );
   }
 
-  const options = slot.options || [];
+  // Filter to show only unique options by label (keep the latest one)
+  const allOptions = slot.options || [];
+  const uniqueOptionsMap = new Map<string, typeof allOptions[0]>();
+  allOptions.forEach((opt) => {
+    const existing = uniqueOptionsMap.get(opt.option_label);
+    if (!existing || new Date(opt.created_at) > new Date(existing.created_at)) {
+      uniqueOptionsMap.set(opt.option_label, opt);
+    }
+  });
+  const options = Array.from(uniqueOptionsMap.values()).sort((a, b) =>
+    a.option_label.localeCompare(b.option_label)
+  );
   const selectedOption = options.find((o) => o.is_selected);
   const minutesUntilDeadline = getMinutesUntilDeadline();
 
@@ -352,71 +361,33 @@ export default function SlotDetailPage() {
                 </CardTitle>
               </CardHeader>
 
-              <CardContent className="space-y-4">
-                {/* Image Preview */}
-                {option.image_url && (
-                  <div className="relative aspect-video rounded-lg overflow-hidden bg-slate-100">
+              <CardContent className="space-y-3 p-4">
+                {/* Image Preview - smaller */}
+                {option.image_url ? (
+                  <div className="relative aspect-[16/9] max-h-40 rounded-lg overflow-hidden bg-slate-100">
                     <img
                       src={option.image_url}
                       alt={`Option ${option.option_label}`}
                       className="w-full h-full object-cover"
                     />
                   </div>
-                )}
-
-                {!option.image_url && (
-                  <div className="aspect-video rounded-lg bg-slate-100 flex items-center justify-center">
+                ) : (
+                  <div className="h-24 rounded-lg bg-slate-100 flex items-center justify-center">
                     <div className="text-center text-slate-400">
-                      <ImageIcon className="h-12 w-12 mx-auto mb-2" />
-                      <p>No image generated</p>
+                      <ImageIcon className="h-8 w-8 mx-auto mb-1" />
+                      <p className="text-xs">No image</p>
                     </div>
                   </div>
                 )}
 
-                {/* Language Tabs */}
-                <Tabs defaultValue="en" className="w-full">
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="en" className="flex items-center gap-1">
-                      <Globe className="h-3 w-3" />
-                      English
-                    </TabsTrigger>
-                    <TabsTrigger value="ru" className="flex items-center gap-1">
-                      <Globe className="h-3 w-3" />
-                      Russian
-                    </TabsTrigger>
-                  </TabsList>
-
-                  <TabsContent value="en" className="space-y-3 mt-4">
-                    <div>
-                      <h4 className="font-semibold text-lg">{option.title_en}</h4>
-                    </div>
-                    <p className="text-slate-600 whitespace-pre-wrap">{option.body_en}</p>
-                  </TabsContent>
-
-                  <TabsContent value="ru" className="space-y-3 mt-4">
-                    <div>
-                      <h4 className="font-semibold text-lg">{option.title_ru}</h4>
-                    </div>
-                    <p className="text-slate-600 whitespace-pre-wrap">{option.body_ru}</p>
-                  </TabsContent>
-                </Tabs>
-
-                {/* Hashtags */}
-                {option.hashtags && (
-                  <div className="flex flex-wrap gap-1">
-                    {(typeof option.hashtags === 'string'
-                      ? JSON.parse(option.hashtags)
-                      : option.hashtags
-                    ).map((tag: string, i: number) => (
-                      <Badge key={i} variant="secondary" className="text-xs">
-                        {tag}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
+                {/* Russian Content Only */}
+                <div className="space-y-2">
+                  <h4 className="font-semibold text-base leading-tight">{option.title_ru}</h4>
+                  <p className="text-sm text-slate-600 whitespace-pre-wrap line-clamp-6">{option.body_ru}</p>
+                </div>
 
                 {/* Actions */}
-                <div className="flex gap-2 pt-4 border-t">
+                <div className="flex gap-2 pt-3 border-t">
                   {slot.status === 'options_ready' && (
                     <>
                       <Button
@@ -458,62 +429,35 @@ export default function SlotDetailPage() {
         </Card>
       )}
 
-      {/* Edit Dialog */}
+      {/* Edit Dialog - Russian Only */}
       <Dialog open={!!editingOption} onOpenChange={() => setEditingOption(null)}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Option {editingOption?.option_label}</DialogTitle>
             <DialogDescription>
-              Make changes to the post content. Changes will be saved when you click save.
+              Make changes to the post content.
             </DialogDescription>
           </DialogHeader>
 
-          <Tabs defaultValue="en" className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="en">English</TabsTrigger>
-              <TabsTrigger value="ru">Russian</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="en" className="space-y-4 mt-4">
-              <div className="space-y-2">
-                <Label htmlFor="title_en">Title (English)</Label>
-                <Input
-                  id="title_en"
-                  value={editForm.title_en}
-                  onChange={(e) => setEditForm({ ...editForm, title_en: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="body_en">Body (English)</Label>
-                <Textarea
-                  id="body_en"
-                  value={editForm.body_en}
-                  onChange={(e) => setEditForm({ ...editForm, body_en: e.target.value })}
-                  rows={8}
-                />
-              </div>
-            </TabsContent>
-
-            <TabsContent value="ru" className="space-y-4 mt-4">
-              <div className="space-y-2">
-                <Label htmlFor="title_ru">Title (Russian)</Label>
-                <Input
-                  id="title_ru"
-                  value={editForm.title_ru}
-                  onChange={(e) => setEditForm({ ...editForm, title_ru: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="body_ru">Body (Russian)</Label>
-                <Textarea
-                  id="body_ru"
-                  value={editForm.body_ru}
-                  onChange={(e) => setEditForm({ ...editForm, body_ru: e.target.value })}
-                  rows={8}
-                />
-              </div>
-            </TabsContent>
-          </Tabs>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="title_ru">Title</Label>
+              <Input
+                id="title_ru"
+                value={editForm.title_ru}
+                onChange={(e) => setEditForm({ ...editForm, title_ru: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="body_ru">Body</Label>
+              <Textarea
+                id="body_ru"
+                value={editForm.body_ru}
+                onChange={(e) => setEditForm({ ...editForm, body_ru: e.target.value })}
+                rows={10}
+              />
+            </div>
+          </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingOption(null)}>
@@ -542,8 +486,8 @@ export default function SlotDetailPage() {
           {selectedOption && (
             <div className="py-4">
               <div className="rounded-lg border p-4 space-y-2">
-                <h4 className="font-semibold">{selectedOption.title_en}</h4>
-                <p className="text-sm text-slate-600 line-clamp-3">{selectedOption.body_en}</p>
+                <h4 className="font-semibold">{selectedOption.title_ru}</h4>
+                <p className="text-sm text-slate-600 line-clamp-3">{selectedOption.body_ru}</p>
               </div>
             </div>
           )}
