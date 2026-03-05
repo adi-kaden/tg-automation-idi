@@ -279,7 +279,8 @@ export const api = {
   // Scraper
   scraper: {
     getSources: async () => {
-      return fetchWithAuth<import('@/types').ScrapeSource[]>('/scraper/sources');
+      const response = await fetchWithAuth<{ items: import('@/types').ScrapeSource[] }>('/scraper/sources');
+      return response.items;
     },
 
     createSource: async (data: Partial<import('@/types').ScrapeSource>) => {
