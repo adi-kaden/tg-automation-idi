@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     # App Settings
     debug: bool = True
     cors_origins: str = "http://localhost:3000"
+    backend_url: str = "http://localhost:8000"  # Set to your Railway backend URL in production
 
     @property
     def cors_origins_list(self) -> list[str]:

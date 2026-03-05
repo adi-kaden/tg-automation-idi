@@ -1,12 +1,18 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.config import get_settings
 from app.api import api_router
 
 settings = get_settings()
+
+# Image storage directory
+IMAGES_DIR = Path("generated_images")
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @asynccontextmanager
@@ -47,6 +53,23 @@ async def root():
         "version": "1.0.0",
         "status": "running",
     }
+
+
+@app.get("/images/{filename}")
+async def serve_image(filename: str):
+    """Serve generated images."""
+    # Sanitize filename to prevent directory traversal
+    safe_filename = Path(filename).name
+    file_path = IMAGES_DIR / safe_filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    return FileResponse(
+        file_path,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get("/health")

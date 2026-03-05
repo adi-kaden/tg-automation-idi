@@ -178,10 +178,18 @@ def generate_content_for_slot(self, slot_id: str):
                     option_label=label,
                 )
 
+                # Construct image URL from local path
+                final_image_url = None
+                if image_path:
+                    from pathlib import Path
+                    filename = Path(image_path).name
+                    final_image_url = f"{settings.backend_url}/images/{filename}"
+                    logger.info(f"Image URL: {final_image_url}")
+
                 options_to_save.append({
                     "label": label,
                     "post": post,
-                    "image_url": image_url,
+                    "image_url": final_image_url,
                     "image_path": image_path,
                     "source_ids": [a["id"] for a in article_subset],
                     "category": category,
