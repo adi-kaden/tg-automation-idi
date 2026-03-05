@@ -94,8 +94,25 @@ def generate_content_for_slot(self, slot_id: str):
             if not slot:
                 return {"error": f"Slot {slot_id} not found"}
 
-            if slot.status not in ["pending", "generating"]:
-                return {"error": f"Slot {slot_id} is not in pending state"}
+            if slot.status == "published":
+                return {"error": f"Slot {slot_id} is already published"}
+
+            # Allow regeneration for pending, generating, options_ready, approved, failed
+            if slot.status in ["options_ready", "approved", "failed"]:
+                # Clear existing options for regeneration
+                from sqlalchemy import delete as sql_delete
+
+                slot.selected_option_id = None
+                slot.selected_by = None
+                slot.selected_by_user_id = None
+                await db.flush()
+
+                # Delete old options
+                await db.execute(
+                    sql_delete(PostOption).where(PostOption.slot_id == slot.id)
+                )
+                await db.commit()
+                logger.info(f"Cleared existing options for slot {slot_id} for regeneration")
 
             # Update status to generating
             slot.status = "generating"

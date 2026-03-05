@@ -135,11 +135,20 @@ async def trigger_content_generation(
     if not slot:
         raise HTTPException(status_code=404, detail="Slot not found")
 
-    if slot.status not in ["pending", "failed"]:
+    if slot.status == "published":
         raise HTTPException(
             status_code=400,
-            detail=f"Slot is in '{slot.status}' state, cannot generate"
+            detail="Cannot regenerate a published slot"
         )
+
+    # Allow regeneration for pending, failed, options_ready, and approved slots
+    # Reset slot status and clear existing options
+    if slot.status in ["options_ready", "approved"]:
+        # Clear selected option reference first
+        slot.selected_option_id = None
+        slot.selected_by = None
+        slot.selected_by_user_id = None
+        await db.commit()
 
     # Trigger async task
     task = generate_content_for_slot.delay(str(slot_id))
