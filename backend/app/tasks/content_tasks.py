@@ -452,8 +452,37 @@ def publish_scheduled_slot(self, slot_id: str = None, slot_number: int = None):
         slot_id: Direct slot UUID (for manual publish via API)
         slot_number: Slot number 1-5 (for scheduled publish via Celery beat)
     """
+    import redis
+    from datetime import timedelta
+
     logger.info(f"Publishing task triggered, slot_id={slot_id}, slot_number={slot_number}")
 
+    # Create Redis lock to prevent duplicate publishing
+    redis_client = redis.from_url(settings.effective_redis_url)
+    lock_key = f"publish_lock:{slot_id or f'slot_{slot_number}'}:{datetime.now(DUBAI_TZ).date()}"
+    lock = redis_client.lock(lock_key, timeout=300, blocking_timeout=5)
+
+    if not lock.acquire(blocking=False):
+        logger.warning(f"Could not acquire lock {lock_key}, another worker is publishing")
+        return {"status": "skipped", "reason": "lock_not_acquired"}
+
+    try:
+        result = run_async(_do_publish(slot_id, slot_number))
+        return result
+    except Exception as e:
+        logger.error(f"Publishing task failed: {e}")
+        import traceback
+        traceback.print_exc()
+        self.retry(countdown=60, exc=e)
+    finally:
+        try:
+            lock.release()
+        except Exception:
+            pass  # Lock may have expired
+
+
+def _do_publish(slot_id: str = None, slot_number: int = None):
+    """Inner publish function."""
     async def _publish():
         from sqlalchemy import func
         AsyncSessionLocal = get_async_session()
@@ -622,10 +651,4 @@ def publish_scheduled_slot(self, slot_id: str = None, slot_number: int = None):
                 "results": results,
             }
 
-    try:
-        return run_async(_publish())
-    except Exception as e:
-        logger.error(f"Publishing task failed: {e}")
-        import traceback
-        traceback.print_exc()
-        self.retry(countdown=60, exc=e)
+    return _publish()
