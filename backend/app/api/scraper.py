@@ -240,6 +240,72 @@ async def run_all_scrapers(
     }
 
 
+@router.get("/status")
+async def get_scraper_status(
+    db: DBSession,
+    current_user: SMMUser,
+):
+    """
+    Get scraper status including article counts and recent runs.
+    """
+    # Count all articles
+    total_result = await db.execute(select(func.count(ScrapedArticle.id)))
+    total_articles = total_result.scalar()
+
+    # Count unused articles (available for content generation)
+    unused_result = await db.execute(
+        select(func.count(ScrapedArticle.id))
+        .where(ScrapedArticle.used_in_post_id.is_(None))
+    )
+    unused_articles = unused_result.scalar()
+
+    # Count by category
+    category_result = await db.execute(
+        select(ScrapedArticle.category, func.count(ScrapedArticle.id))
+        .where(ScrapedArticle.used_in_post_id.is_(None))
+        .group_by(ScrapedArticle.category)
+    )
+    by_category = {cat: count for cat, count in category_result.all()}
+
+    # Count active sources
+    active_sources_result = await db.execute(
+        select(func.count(ScrapeSource.id)).where(ScrapeSource.is_active == True)
+    )
+    active_sources = active_sources_result.scalar()
+
+    # Get last 5 scrape runs
+    runs_result = await db.execute(
+        select(ScrapeRun)
+        .options(selectinload(ScrapeRun.source))
+        .order_by(ScrapeRun.started_at.desc())
+        .limit(5)
+    )
+    recent_runs = [
+        {
+            "id": str(r.id),
+            "source": r.source.name if r.source else "All",
+            "status": r.status,
+            "articles_found": r.articles_found,
+            "articles_new": r.articles_new,
+            "error": r.error_message[:100] if r.error_message else None,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+        }
+        for r in runs_result.scalars().all()
+    ]
+
+    return {
+        "total_articles": total_articles,
+        "unused_articles": unused_articles,
+        "by_category": by_category,
+        "active_sources": active_sources,
+        "recent_runs": recent_runs,
+        "ready_for_generation": {
+            "real_estate": by_category.get("real_estate", 0) + by_category.get("construction", 0),
+            "general_dubai": sum(v for k, v in by_category.items() if k not in ["real_estate", "construction"]),
+        },
+    }
+
+
 @router.post("/sources/{source_id}/run", response_model=ScrapeRunTrigger)
 async def trigger_scrape(
     source_id: UUID,
