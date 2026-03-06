@@ -126,6 +126,11 @@ async def trigger_content_generation(
     """
     Trigger AI content generation for a slot.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"Regenerate requested for slot {slot_id}")
+
     # Verify slot exists
     result = await db.execute(
         select(ContentSlot).where(ContentSlot.id == slot_id)
@@ -133,7 +138,10 @@ async def trigger_content_generation(
     slot = result.scalar_one_or_none()
 
     if not slot:
+        logger.error(f"Slot {slot_id} not found")
         raise HTTPException(status_code=404, detail="Slot not found")
+
+    logger.info(f"Slot {slot_id} current status: {slot.status}")
 
     if slot.status == "published":
         raise HTTPException(
@@ -149,9 +157,15 @@ async def trigger_content_generation(
         slot.selected_by = None
         slot.selected_by_user_id = None
         await db.commit()
+        logger.info(f"Cleared selection for slot {slot_id}")
 
     # Trigger async task
-    task = generate_content_for_slot.delay(str(slot_id))
+    try:
+        task = generate_content_for_slot.delay(str(slot_id))
+        logger.info(f"Celery task queued: {task.id} for slot {slot_id}")
+    except Exception as e:
+        logger.error(f"Failed to queue Celery task for slot {slot_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to queue generation task: {str(e)}")
 
     return ContentGenerationResponse(
         slot_id=slot_id,

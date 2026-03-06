@@ -101,13 +101,29 @@ def generate_content_for_slot(self, slot_id: str):
             if slot.status in ["options_ready", "approved", "failed"]:
                 # Clear existing options for regeneration
                 from sqlalchemy import delete as sql_delete
+                from sqlalchemy import update as sql_update
+
+                # First get the option IDs for this slot
+                existing_options_result = await db.execute(
+                    select(PostOption.id).where(PostOption.slot_id == slot.id)
+                )
+                existing_option_ids = [row[0] for row in existing_options_result.fetchall()]
 
                 slot.selected_option_id = None
                 slot.selected_by = None
                 slot.selected_by_user_id = None
                 await db.flush()
 
-                # Delete old options
+                # Clear article references to these options (foreign key constraint)
+                if existing_option_ids:
+                    await db.execute(
+                        sql_update(ScrapedArticle)
+                        .where(ScrapedArticle.used_in_post_id.in_(existing_option_ids))
+                        .values(used_in_post_id=None, is_used=False)
+                    )
+                    await db.flush()
+
+                # Now delete old options
                 await db.execute(
                     sql_delete(PostOption).where(PostOption.slot_id == slot.id)
                 )
@@ -126,15 +142,19 @@ def generate_content_for_slot(self, slot_id: str):
 
             # Get relevant articles
             manager = SlotManager(db)
+            logger.info(f"Fetching articles for content_type={slot.content_type}")
             articles = await manager.get_articles_for_content_type(
                 slot.content_type,
                 limit=10,
                 exclude_used=True
             )
 
+            logger.info(f"Found {len(articles) if articles else 0} articles for slot {slot_id}")
+
             if not articles:
                 slot.status = "failed"
                 await db.commit()
+                logger.error(f"No articles available for slot {slot_id} - content generation failed")
                 return {"error": "No articles available for content generation"}
 
             # Convert articles to dicts
