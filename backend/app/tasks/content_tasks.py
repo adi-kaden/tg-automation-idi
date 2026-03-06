@@ -622,6 +622,7 @@ def _do_publish(slot_id: str = None, slot_number: int = None):
                     hashtags=hashtags,
                     image_url=option.image_url,
                     image_local_path=option.image_local_path,
+                    image_data=option.image_data,  # Base64 encoded image
                 )
 
                 # Publish

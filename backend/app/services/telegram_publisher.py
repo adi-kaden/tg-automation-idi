@@ -37,6 +37,7 @@ class PostContent:
     hashtags: list[str]
     image_url: Optional[str] = None
     image_local_path: Optional[str] = None
+    image_data: Optional[str] = None  # Base64 encoded image
     # Keep EN fields for backwards compatibility (empty strings)
     title_en: str = ""
     body_en: str = ""
@@ -164,6 +165,7 @@ class TelegramPublisher:
         text: str,
         image_url: Optional[str] = None,
         image_local_path: Optional[str] = None,
+        image_data: Optional[str] = None,
     ) -> Optional[int]:
         """
         Send a message with photo to the channel.
@@ -172,19 +174,36 @@ class TelegramPublisher:
             text: HTML-formatted message text
             image_url: URL of the image to send
             image_local_path: Local path to image file
+            image_data: Base64 encoded image data
 
         Returns:
             Message ID if successful
         """
-        photo = None
+        import base64
+        from io import BytesIO
 
-        # Determine photo source
-        if image_local_path:
+        photo = None
+        photo_file = None
+
+        # Determine photo source (priority: base64 > local file > URL)
+        if image_data:
+            # Decode base64 image
+            try:
+                image_bytes = base64.b64decode(image_data)
+                photo_file = BytesIO(image_bytes)
+                photo_file.name = "image.png"  # Telegram needs a filename
+                photo = photo_file
+                logger.info(f"Using base64 image ({len(image_bytes)} bytes)")
+            except Exception as e:
+                logger.error(f"Failed to decode base64 image: {e}")
+        elif image_local_path:
             path = Path(image_local_path)
             if path.exists():
                 photo = path.open("rb")
+                logger.info(f"Using local file: {image_local_path}")
         elif image_url:
             photo = image_url
+            logger.info(f"Using image URL: {image_url}")
 
         if photo:
             try:
@@ -197,11 +216,12 @@ class TelegramPublisher:
                 )
                 return message_id
             finally:
-                # Close file handle if we opened one
-                if image_local_path and hasattr(photo, 'close'):
+                # Close file handles if we opened any
+                if hasattr(photo, 'close'):
                     photo.close()
         else:
             # No image - send text only
+            logger.info("No image available, sending text only")
             return await self._send_with_retry(
                 self.bot.send_message,
                 chat_id=self.channel_id,
@@ -240,6 +260,7 @@ class TelegramPublisher:
                 text=text_ru,
                 image_url=content.image_url,
                 image_local_path=content.image_local_path,
+                image_data=content.image_data,
             )
 
             if not message_id_ru:

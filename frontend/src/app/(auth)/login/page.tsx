@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { useForm } from 'react-hook-form';
@@ -26,12 +26,7 @@ export default function LoginPage() {
   const { login, isLoading, isHydrated, isAuthenticated, error, clearError } = useAuthStore();
   const [showPassword, setShowPassword] = useState(false);
 
-  // Redirect if already authenticated
-  if (isHydrated && isAuthenticated) {
-    router.push('/');
-    return null;
-  }
-
+  // All hooks must be called before any conditional returns
   const {
     register,
     handleSubmit,
@@ -39,6 +34,18 @@ export default function LoginPage() {
   } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
   });
+
+  // Redirect if already authenticated (using useEffect to avoid hook order issues)
+  useEffect(() => {
+    if (isHydrated && isAuthenticated) {
+      router.push('/');
+    }
+  }, [isHydrated, isAuthenticated, router]);
+
+  // Show nothing while redirecting
+  if (isHydrated && isAuthenticated) {
+    return null;
+  }
 
   const onSubmit = async (data: LoginForm) => {
     try {
