@@ -1,16 +1,62 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { Clock, CheckCircle2, AlertCircle, Loader2, ArrowRight, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useContentQueue } from '@/hooks/use-api';
+import { useContentQueue, useRegenerateSlot } from '@/hooks/use-api';
+import { toast } from 'sonner';
 import type { ContentSlot } from '@/types';
 
 export default function ContentQueuePage() {
   const { data: queue, isLoading, error, refetch } = useContentQueue();
+  const regenerateMutation = useRegenerateSlot();
+  const [regeneratingSlots, setRegeneratingSlots] = useState<Set<string>>(new Set());
+
+  const handleRegenerate = (slotId: string) => {
+    setRegeneratingSlots((prev) => new Set(prev).add(slotId));
+    regenerateMutation.mutate(slotId, {
+      onSuccess: () => {
+        toast.success('Regeneration started - this may take a minute');
+        // Poll for completion
+        const pollInterval = setInterval(async () => {
+          const result = await refetch();
+          const slot = result.data?.slots?.find((s) => s.id === slotId);
+          if (slot?.status !== 'generating') {
+            setRegeneratingSlots((prev) => {
+              const next = new Set(prev);
+              next.delete(slotId);
+              return next;
+            });
+            clearInterval(pollInterval);
+            if (slot?.status === 'options_ready') {
+              toast.success('Content generated successfully');
+            }
+          }
+        }, 3000);
+        // Timeout after 2 minutes
+        setTimeout(() => {
+          setRegeneratingSlots((prev) => {
+            const next = new Set(prev);
+            next.delete(slotId);
+            return next;
+          });
+          clearInterval(pollInterval);
+        }, 120000);
+      },
+      onError: (error) => {
+        setRegeneratingSlots((prev) => {
+          const next = new Set(prev);
+          next.delete(slotId);
+          return next;
+        });
+        toast.error(`Failed to regenerate: ${error.message}`);
+      },
+    });
+  };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -220,6 +266,44 @@ export default function ContentQueuePage() {
                         <Link href={`/posts/${slot.published_post_id}`}>
                           View Post
                         </Link>
+                      </Button>
+                    )}
+                    {slot.status === 'failed' && (
+                      <Button
+                        variant="destructive"
+                        onClick={() => handleRegenerate(slot.id)}
+                        disabled={regeneratingSlots.has(slot.id)}
+                      >
+                        {regeneratingSlots.has(slot.id) ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Retrying...
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            Retry
+                          </>
+                        )}
+                      </Button>
+                    )}
+                    {slot.status === 'pending' && (
+                      <Button
+                        variant="outline"
+                        onClick={() => handleRegenerate(slot.id)}
+                        disabled={regeneratingSlots.has(slot.id)}
+                      >
+                        {regeneratingSlots.has(slot.id) ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Generating...
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            Generate
+                          </>
+                        )}
                       </Button>
                     )}
                   </div>
