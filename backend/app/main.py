@@ -106,3 +106,73 @@ async def health_check(debug: bool = False):
     return result
 
 
+@app.get("/debug/articles")
+async def debug_articles():
+    """
+    Public debug endpoint to check article counts.
+    No authentication required.
+    """
+    from sqlalchemy import select, func
+    from app.database import AsyncSessionLocal
+    from app.models.scraped_article import ScrapedArticle
+    from app.models.scrape_source import ScrapeSource
+    from app.models.scrape_run import ScrapeRun
+
+    try:
+        async with AsyncSessionLocal() as db:
+            # Count all articles
+            total_result = await db.execute(select(func.count(ScrapedArticle.id)))
+            total = total_result.scalar()
+
+            # Count unused articles
+            unused_result = await db.execute(
+                select(func.count(ScrapedArticle.id))
+                .where(ScrapedArticle.used_in_post_id.is_(None))
+            )
+            unused = unused_result.scalar()
+
+            # Count by category (unused only)
+            category_result = await db.execute(
+                select(ScrapedArticle.category, func.count(ScrapedArticle.id))
+                .where(ScrapedArticle.used_in_post_id.is_(None))
+                .group_by(ScrapedArticle.category)
+            )
+            by_category = {cat: count for cat, count in category_result.all()}
+
+            # Count active sources
+            sources_result = await db.execute(
+                select(func.count(ScrapeSource.id)).where(ScrapeSource.is_active == True)
+            )
+            active_sources = sources_result.scalar()
+
+            # Get last 3 scrape runs
+            runs_result = await db.execute(
+                select(ScrapeRun)
+                .order_by(ScrapeRun.started_at.desc())
+                .limit(3)
+            )
+            recent_runs = [
+                {
+                    "status": r.status,
+                    "articles_found": r.articles_found,
+                    "articles_new": r.articles_new,
+                    "error": r.error_message[:80] if r.error_message else None,
+                }
+                for r in runs_result.scalars().all()
+            ]
+
+            return {
+                "total_articles": total,
+                "unused_articles": unused,
+                "by_category": by_category,
+                "active_sources": active_sources,
+                "recent_runs": recent_runs,
+                "can_generate": {
+                    "real_estate": by_category.get("real_estate", 0) + by_category.get("construction", 0) > 0,
+                    "general_dubai": sum(v for k, v in by_category.items() if k not in ["real_estate", "construction"]) > 0,
+                },
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+
