@@ -250,18 +250,18 @@ class SlotManager:
         Returns:
             List of relevant ScrapedArticle objects
         """
-        # Map content type to categories
+        # Map content type to preferred categories
         if content_type == "real_estate":
-            categories = ["real_estate", "market_analysis", "construction", "regulation"]
+            preferred_categories = ["real_estate", "market_analysis", "construction", "regulation"]
         else:
-            categories = [
+            preferred_categories = [
                 "economy", "tech", "lifestyle", "events", "tourism",
                 "general", "business", "transportation", "entertainment"
             ]
 
-        # Build query
+        # Build query with preferred categories
         query = select(ScrapedArticle).where(
-            ScrapedArticle.category.in_(categories)
+            ScrapedArticle.category.in_(preferred_categories)
         )
 
         if exclude_used:
@@ -274,7 +274,28 @@ class SlotManager:
         ).limit(limit)
 
         result = await self.db.execute(query)
-        return list(result.scalars().all())
+        articles = list(result.scalars().all())
+
+        # Fallback: if no articles found with preferred categories, get ANY unused articles
+        if not articles:
+            logger.warning(
+                f"No articles found for {content_type} with categories {preferred_categories}. "
+                "Falling back to any available articles."
+            )
+            fallback_query = select(ScrapedArticle)
+
+            if exclude_used:
+                fallback_query = fallback_query.where(ScrapedArticle.used_in_post_id.is_(None))
+
+            fallback_query = fallback_query.order_by(
+                ScrapedArticle.relevance_score.desc(),
+                ScrapedArticle.scraped_at.desc()
+            ).limit(limit)
+
+            fallback_result = await self.db.execute(fallback_query)
+            articles = list(fallback_result.scalars().all())
+
+        return articles
 
     async def mark_articles_as_used(
         self,
