@@ -60,14 +60,44 @@ async def seed_users(db: AsyncSession):
 async def seed_scrape_sources(db: AsyncSession):
     """Create default scrape sources."""
     sources_data = [
-        # Real Estate News
+        # ============ MOST RELIABLE - Google News RSS ============
+        # These are the most reliable sources with 100+ articles each
         {
-            "name": "Gulf News Property",
-            "url": "https://gulfnews.com/property/rss",
+            "name": "Google News - Dubai Real Estate",
+            "url": "https://news.google.com/rss/search?q=Dubai+real+estate&hl=en&gl=AE&ceid=AE:en",
             "source_type": "rss",
             "category": "real_estate",
             "language": "en",
         },
+        {
+            "name": "Google News - Dubai Property",
+            "url": "https://news.google.com/rss/search?q=Dubai+property+market&hl=en&gl=AE&ceid=AE:en",
+            "source_type": "rss",
+            "category": "real_estate",
+            "language": "en",
+        },
+        {
+            "name": "Google News - Dubai",
+            "url": "https://news.google.com/rss/search?q=Dubai&hl=en&gl=AE&ceid=AE:en",
+            "source_type": "rss",
+            "category": "general",
+            "language": "en",
+        },
+        {
+            "name": "Google News - UAE Economy",
+            "url": "https://news.google.com/rss/search?q=UAE+economy&hl=en&gl=AE&ceid=AE:en",
+            "source_type": "rss",
+            "category": "economy",
+            "language": "en",
+        },
+        {
+            "name": "Google News - Dubai Construction",
+            "url": "https://news.google.com/rss/search?q=Dubai+construction&hl=en&gl=AE&ceid=AE:en",
+            "source_type": "rss",
+            "category": "construction",
+            "language": "en",
+        },
+        # ============ WORKING WEBSITES - Real Estate ============
         {
             "name": "Khaleej Times Property",
             "url": "https://www.khaleejtimes.com/property",
@@ -89,36 +119,7 @@ async def seed_scrape_sources(db: AsyncSession):
             "category": "real_estate",
             "language": "en",
         },
-        {
-            "name": "Construction Week Online",
-            "url": "https://www.constructionweekonline.com/",
-            "source_type": "website",
-            "category": "construction",
-            "language": "en",
-        },
-        # Market Data
-        {
-            "name": "DXB Interact",
-            "url": "https://dxbinteract.com/",
-            "source_type": "website",
-            "category": "real_estate",
-            "language": "en",
-        },
-        # General News
-        {
-            "name": "Gulf News",
-            "url": "https://gulfnews.com/rss",
-            "source_type": "rss",
-            "category": "general",
-            "language": "en",
-        },
-        {
-            "name": "Khaleej Times",
-            "url": "https://www.khaleejtimes.com/rss",
-            "source_type": "rss",
-            "category": "general",
-            "language": "en",
-        },
+        # ============ WORKING WEBSITES - Government/Official ============
         {
             "name": "WAM Emirates News Agency",
             "url": "https://www.wam.ae/en",
@@ -133,51 +134,15 @@ async def seed_scrape_sources(db: AsyncSession):
             "category": "government",
             "language": "en",
         },
-        # Lifestyle & Events
+        # ============ WORKING WEBSITES - Lifestyle & Tourism ============
         {
-            "name": "Time Out Dubai",
-            "url": "https://www.timeoutdubai.com/news",
-            "source_type": "website",
-            "category": "lifestyle",
-            "language": "en",
-        },
-        {
-            "name": "What's On Dubai",
-            "url": "https://whatson.ae/dubai/",
-            "source_type": "website",
-            "category": "events",
-            "language": "en",
-        },
-        {
-            "name": "Lovin Dubai",
-            "url": "https://lovindubai.com/",
-            "source_type": "website",
-            "category": "lifestyle",
-            "language": "en",
-        },
-        {
-            "name": "Visit Dubai Blog",
+            "name": "Visit Dubai",
             "url": "https://www.visitdubai.com/en/articles",
             "source_type": "website",
             "category": "tourism",
             "language": "en",
         },
-        {
-            "name": "Dubai Calendar",
-            "url": "https://www.dubaicalendar.com/",
-            "source_type": "website",
-            "category": "events",
-            "language": "en",
-        },
-        # Economy & Finance
-        {
-            "name": "CBUAE Central Bank",
-            "url": "https://www.centralbank.ae/en/news",
-            "source_type": "website",
-            "category": "economy",
-            "language": "en",
-        },
-        # Technology
+        # ============ WORKING WEBSITES - Other Categories ============
         {
             "name": "Gulf Business Tech",
             "url": "https://gulfbusiness.com/category/technology/",
@@ -185,7 +150,6 @@ async def seed_scrape_sources(db: AsyncSession):
             "category": "tech",
             "language": "en",
         },
-        # Transportation
         {
             "name": "RTA News",
             "url": "https://www.rta.ae/wps/portal/rta/ae/home/news",
@@ -194,36 +158,24 @@ async def seed_scrape_sources(db: AsyncSession):
             "language": "en",
         },
         {
-            "name": "Gulf News Transport",
-            "url": "https://gulfnews.com/uae/transport/rss",
-            "source_type": "rss",
-            "category": "transportation",
-            "language": "en",
-        },
-        # Sports
-        {
             "name": "Sport360",
             "url": "https://sport360.com/",
             "source_type": "website",
             "category": "sports",
             "language": "en",
         },
-        # Google News Aggregation
-        {
-            "name": "Google News - Dubai",
-            "url": "https://news.google.com/rss/search?q=Dubai&hl=en&gl=AE&ceid=AE:en",
-            "source_type": "rss",
-            "category": "general",
-            "language": "en",
-        },
-        {
-            "name": "Google News - Dubai Real Estate",
-            "url": "https://news.google.com/rss/search?q=Dubai+real+estate&hl=en&gl=AE&ceid=AE:en",
-            "source_type": "rss",
-            "category": "real_estate",
-            "language": "en",
-        },
     ]
+
+    # NOTE: The following sources were removed because they don't work:
+    # - Gulf News RSS feeds (return 0 articles)
+    # - Khaleej Times RSS (returns 0 articles)
+    # - Time Out Dubai (403 Forbidden)
+    # - Lovin Dubai (Connection error)
+    # - Construction Week Online (403 Forbidden)
+    # - DXB Interact (403 Forbidden)
+    # - Dubai Calendar (unreliable)
+    # - What's On Dubai (unreliable)
+    # - CBUAE Central Bank (limited content)
 
     for source_data in sources_data:
         # Check if source exists
