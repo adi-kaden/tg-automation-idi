@@ -171,26 +171,21 @@ def generate_content_for_slot(self, slot_id: str):
 
                 # Generate image
                 logger.info(f"Generating image for option {label}")
-                image_url, image_path = await image_gen.generate_image(
+                image_url, image_path, image_base64 = await image_gen.generate_image(
                     prompt=post.image_prompt,
                     category=category,
                     slot_id=slot_id,
                     option_label=label,
                 )
 
-                # Construct image URL from local path
-                final_image_url = None
-                if image_path:
-                    from pathlib import Path
-                    filename = Path(image_path).name
-                    final_image_url = f"{settings.backend_url}/images/{filename}"
-                    logger.info(f"Image URL: {final_image_url}")
+                logger.info(f"Image generated, base64 length: {len(image_base64) if image_base64 else 0}")
 
                 options_to_save.append({
                     "label": label,
                     "post": post,
-                    "image_url": final_image_url,
+                    "image_url": image_url,
                     "image_path": image_path,
+                    "image_data": image_base64,
                     "source_ids": [a["id"] for a in article_subset],
                     "category": category,
                 })
@@ -236,6 +231,7 @@ def generate_content_for_slot(self, slot_id: str):
                     image_prompt=opt_data["post"].image_prompt,
                     image_url=opt_data["image_url"],
                     image_local_path=opt_data["image_path"],
+                    image_data=opt_data.get("image_data"),  # Base64 encoded image
                     category=opt_data["category"],
                     content_type=slot_data["content_type"],
                     source_article_ids=json.dumps(opt_data["source_ids"]),

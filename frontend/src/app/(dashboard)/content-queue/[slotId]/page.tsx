@@ -59,7 +59,7 @@ export default function SlotDetailPage() {
     body_ru: '',
   });
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
-  const [selectedLanguage, setSelectedLanguage] = useState<'en' | 'ru'>('en');
+  const [isRegenerating, setIsRegenerating] = useState(false);
 
   const handleSelectOption = (optionId: string) => {
     selectMutation.mutate(
@@ -125,12 +125,29 @@ export default function SlotDetailPage() {
   };
 
   const handleRegenerate = () => {
+    setIsRegenerating(true);
     regenerateMutation.mutate(slotId, {
       onSuccess: () => {
-        toast.success('Regeneration started');
-        refetch();
+        toast.success('Regeneration started - this may take a minute');
+        // Poll for completion every 3 seconds
+        const pollInterval = setInterval(async () => {
+          const result = await refetch();
+          if (result.data?.status !== 'generating') {
+            setIsRegenerating(false);
+            clearInterval(pollInterval);
+            if (result.data?.status === 'options_ready') {
+              toast.success('Content regenerated successfully');
+            }
+          }
+        }, 3000);
+        // Timeout after 2 minutes
+        setTimeout(() => {
+          setIsRegenerating(false);
+          clearInterval(pollInterval);
+        }, 120000);
       },
       onError: (error) => {
+        setIsRegenerating(false);
         toast.error(`Failed to regenerate: ${error.message}`);
       },
     });
@@ -302,7 +319,7 @@ export default function SlotDetailPage() {
         </Card>
       )}
 
-      {slot.status === 'generating' && (
+      {(slot.status === 'generating' || isRegenerating) && (
         <Card className="border-purple-200 bg-purple-50">
           <CardContent className="flex items-center gap-4 pt-6">
             <Loader2 className="h-8 w-8 text-purple-600 animate-spin" />
@@ -363,10 +380,12 @@ export default function SlotDetailPage() {
 
               <CardContent className="space-y-3 p-4">
                 {/* Image Preview - smaller */}
-                {option.image_url ? (
+                {(option.image_data || option.image_url) ? (
                   <div className="relative aspect-[16/9] max-h-40 rounded-lg overflow-hidden bg-slate-100">
                     <img
-                      src={option.image_url}
+                      src={option.image_data
+                        ? `data:image/png;base64,${option.image_data}`
+                        : option.image_url || ''}
                       alt={`Option ${option.option_label}`}
                       className="w-full h-full object-cover"
                     />

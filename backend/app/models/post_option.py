@@ -32,6 +32,7 @@ class PostOption(Base):
     image_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     image_url: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     image_local_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    image_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
 
     # Metadata
     category: Mapped[str] = mapped_column(String(30), nullable=False)

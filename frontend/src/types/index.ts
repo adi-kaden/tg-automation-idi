@@ -100,6 +100,7 @@ export interface PostOption {
   hashtags: string[];
   image_prompt: string | null;
   image_url: string | null;
+  image_data: string | null;  // Base64 encoded image
   category: ContentCategory;
   ai_quality_score: number;
   content_type: string;

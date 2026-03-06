@@ -3,6 +3,7 @@ Image Generator using Google Imagen API.
 
 Generates images for Telegram posts based on prompts.
 """
+import base64
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -67,7 +68,7 @@ Note: No text or watermarks in the image"""
         category: str,
         slot_id: str,
         option_label: str,
-    ) -> tuple[Optional[str], Optional[str]]:
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """
         Generate an image for a post option using Imagen 4.0.
 
@@ -78,7 +79,7 @@ Note: No text or watermarks in the image"""
             option_label: Option label (A/B) for file naming
 
         Returns:
-            Tuple of (image_url, local_path) - url may be None if only local storage
+            Tuple of (image_url, local_path, image_base64)
         """
         enhanced_prompt = self._enhance_prompt(prompt, category)
 
@@ -99,25 +100,28 @@ Note: No text or watermarks in the image"""
             if response.generated_images and len(response.generated_images) > 0:
                 img = response.generated_images[0]
 
-                # Save the image locally
+                # Get image bytes
+                image_bytes = img.image.image_bytes
+
+                # Encode as base64 for database storage
+                image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+
+                # Also save locally (optional, for debugging)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"{slot_id}_{option_label}_{timestamp}.png"
                 filepath = self.output_dir / filename
-
-                # Get image bytes and save
-                image_bytes = img.image.image_bytes
                 filepath.write_bytes(image_bytes)
 
-                logger.info(f"Image saved to {filepath} ({len(image_bytes)} bytes)")
-                return (None, str(filepath))
+                logger.info(f"Image generated ({len(image_bytes)} bytes), base64 length: {len(image_base64)}")
+                return (None, str(filepath), image_base64)
 
             logger.warning("Imagen did not return any images")
-            return (None, None)
+            return (None, None, None)
 
         except Exception as e:
             logger.error(f"Image generation failed: {e}")
             # Don't raise - image is optional, post can go without
-            return (None, None)
+            return (None, None, None)
 
     async def generate_image_from_url(
         self,

@@ -81,6 +81,7 @@ class PostOptionResponse(PostOptionBase):
     image_prompt: Optional[str] = None
     image_url: Optional[str] = None
     image_local_path: Optional[str] = None
+    image_data: Optional[str] = None  # Base64 encoded image
     source_article_ids: Optional[str] = None  # JSON array of UUIDs
     ai_quality_score: float
     is_selected: bool
