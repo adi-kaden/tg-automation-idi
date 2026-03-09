@@ -38,7 +38,7 @@ class AutoSelector:
             raise ValueError("ANTHROPIC_API_KEY not configured")
 
         self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-        self.model = "claude-sonnet-4-20250514"
+        self.model = "claude-sonnet-4-6"
 
     async def select_best_option(
         self,
