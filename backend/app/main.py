@@ -176,3 +176,52 @@ async def debug_articles():
         return {"error": str(e)}
 
 
+@app.post("/debug/cleanup-old-articles")
+async def debug_cleanup_old_articles(days_old: int = 2):
+    """
+    Delete all articles older than `days_old` days.
+    No authentication required (debug endpoint).
+    """
+    from datetime import datetime, timedelta
+    from sqlalchemy import select, func, delete as sql_delete, update as sql_update
+    from app.database import AsyncSessionLocal
+    from app.models.scraped_article import ScrapedArticle
+
+    try:
+        async with AsyncSessionLocal() as db:
+            cutoff = datetime.utcnow() - timedelta(days=days_old)
+
+            # Count articles to be deleted
+            count_result = await db.execute(
+                select(func.count(ScrapedArticle.id))
+                .where(ScrapedArticle.scraped_at < cutoff)
+            )
+            to_delete = count_result.scalar()
+
+            # Clear FK references first
+            await db.execute(
+                sql_update(ScrapedArticle)
+                .where(
+                    ScrapedArticle.used_in_post_id.is_not(None),
+                    ScrapedArticle.scraped_at < cutoff,
+                )
+                .values(used_in_post_id=None)
+            )
+
+            # Delete old articles
+            result = await db.execute(
+                sql_delete(ScrapedArticle)
+                .where(ScrapedArticle.scraped_at < cutoff)
+            )
+            deleted = result.rowcount
+            await db.commit()
+
+            return {
+                "deleted": deleted,
+                "cutoff": str(cutoff),
+                "message": f"Deleted {deleted} articles older than {days_old} days",
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+
