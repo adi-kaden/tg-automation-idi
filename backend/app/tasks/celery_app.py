@@ -107,6 +107,15 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"slot_number": 5},
     },
 
+    # ==================== Article Cleanup ====================
+
+    # 03:00 Dubai = 23:00 UTC - Delete used articles older than 2 days
+    "cleanup-used-articles": {
+        "task": "app.tasks.scraper_tasks.cleanup_used_articles",
+        "schedule": crontab(hour=23, minute=0),
+        "kwargs": {"days_old": 2},
+    },
+
     # ==================== Analytics Collection ====================
 
     # Collect post analytics every 6 hours
