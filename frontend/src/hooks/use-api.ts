@@ -71,7 +71,7 @@ export function usePendingActions() {
 
 // ==================== Content Hooks ====================
 
-export function useContentSlots(params?: { date?: string; status?: string }) {
+export function useContentSlots(params?: { date_from?: string; date_to?: string; status?: string }) {
   return useQuery({
     queryKey: queryKeys.content.slots(params),
     queryFn: () => api.contentSlots.list(params),

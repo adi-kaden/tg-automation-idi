@@ -191,9 +191,10 @@ export const api = {
 
   // Content Slots
   contentSlots: {
-    list: async (params?: { date?: string; status?: string }) => {
+    list: async (params?: { date_from?: string; date_to?: string; status?: string }) => {
       const queryParams = new URLSearchParams();
-      if (params?.date) queryParams.set('date_from', params.date);
+      if (params?.date_from) queryParams.set('date_from', params.date_from);
+      if (params?.date_to) queryParams.set('date_to', params.date_to);
       if (params?.status) queryParams.set('status', params.status);
       const query = queryParams.toString();
       return fetchWithAuth<import('@/types').ContentSlot[]>(
