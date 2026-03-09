@@ -109,9 +109,9 @@ celery_app.conf.beat_schedule = {
 
     # ==================== Article Cleanup ====================
 
-    # 03:00 Dubai = 23:00 UTC - Delete used articles older than 2 days
-    "cleanup-used-articles": {
-        "task": "app.tasks.scraper_tasks.cleanup_used_articles",
+    # 03:00 Dubai = 23:00 UTC - Delete all articles older than 2 days
+    "cleanup-old-articles": {
+        "task": "app.tasks.scraper_tasks.cleanup_old_articles",
         "schedule": crontab(hour=23, minute=0),
         "kwargs": {"days_old": 2},
     },

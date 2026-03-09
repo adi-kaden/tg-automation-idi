@@ -280,12 +280,12 @@ async def _save_article(
 
 
 @celery_app.task(bind=True)
-def cleanup_used_articles(self, days_old: int = 2):
+def cleanup_old_articles(self, days_old: int = 2):
     """
-    Delete articles that have been used in posts and are older than `days_old` days.
-    Keeps unused articles for future content generation.
+    Delete all articles older than `days_old` days.
+    Fresh articles are scraped daily, so old ones are no longer relevant.
     """
-    logger.info(f"Cleaning up used articles older than {days_old} days")
+    logger.info(f"Cleaning up all articles older than {days_old} days")
 
     async def _cleanup():
         from sqlalchemy import delete as sql_delete, update as sql_update
@@ -293,7 +293,7 @@ def cleanup_used_articles(self, days_old: int = 2):
         async with AsyncSessionLocal() as db:
             cutoff = datetime.utcnow() - timedelta(days=days_old)
 
-            # First, clear the FK reference on articles we're about to delete
+            # Clear FK references on articles we're about to delete
             await db.execute(
                 sql_update(ScrapedArticle)
                 .where(
@@ -303,17 +303,16 @@ def cleanup_used_articles(self, days_old: int = 2):
                 .values(used_in_post_id=None)
             )
 
-            # Delete used articles older than cutoff
+            # Delete all articles older than cutoff
             result = await db.execute(
                 sql_delete(ScrapedArticle).where(
-                    ScrapedArticle.is_used == True,
                     ScrapedArticle.scraped_at < cutoff,
                 )
             )
             deleted = result.rowcount
             await db.commit()
 
-            logger.info(f"Deleted {deleted} used articles older than {days_old} days")
+            logger.info(f"Deleted {deleted} articles older than {days_old} days")
             return {"deleted": deleted, "cutoff": str(cutoff)}
 
     return run_async(_cleanup())
