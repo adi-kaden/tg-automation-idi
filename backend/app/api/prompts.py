@@ -137,6 +137,7 @@ async def update_global_config(
         setattr(config, field, value)
 
     await db.flush()
+    await db.refresh(config)
     return _to_response(config)
 
 
@@ -218,6 +219,7 @@ async def set_slot_override(
         db.add(override)
 
     await db.flush()
+    await db.refresh(override)
     return _to_response(override)
 
 
