@@ -2,7 +2,7 @@
 Celery tasks for scraping operations.
 """
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 import logging
 
@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.models.scrape_source import ScrapeSource
 from app.models.scrape_run import ScrapeRun
 from app.models.scraped_article import ScrapedArticle
+from app.models.rejected_url import RejectedArticleURL
 from app.services.scraper import (
     RSSScraper,
     WebsiteScraper,
@@ -222,6 +223,13 @@ async def _scrape_source(
             await scraper.close()
 
 
+def _normalize_to_utc(dt: datetime) -> datetime:
+    """Convert a datetime to naive UTC. If already naive, assume UTC."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 async def _save_article(
     db: AsyncSession,
     source: ScrapeSource,
@@ -229,34 +237,53 @@ async def _save_article(
     item: ScrapedItem,
 ) -> bool:
     """
-    Save scraped article with deduplication.
-
-    Args:
-        db: Database session
-        source: Source the article came from
-        scrape_run: Current scrape run
-        item: Scraped item to save
+    Save scraped article with deduplication and age filtering.
 
     Returns:
-        True if article was saved (new), False if duplicate
+        True if article was saved (new), False if skipped
     """
+    # Check if URL is in the rejected list (and not expired)
+    rejected_result = await db.execute(
+        select(RejectedArticleURL).where(
+            RejectedArticleURL.url == item.url,
+            RejectedArticleURL.expires_at > datetime.utcnow(),
+        )
+    )
+    if rejected_result.scalar_one_or_none():
+        return False
+
     # Check for existing article with same URL
     result = await db.execute(
         select(ScrapedArticle).where(ScrapedArticle.url == item.url)
     )
-    existing = result.scalar_one_or_none()
-
-    if existing:
+    if result.scalar_one_or_none():
         return False  # Duplicate
+
+    # Check article age — reject if published_at is too old
+    max_age_days = settings.max_article_age_days
+    published_at = item.published_at
+    if published_at:
+        published_utc = _normalize_to_utc(published_at)
+        cutoff = datetime.utcnow() - timedelta(days=max_age_days)
+        if published_utc < cutoff:
+            # Save to rejected URLs table
+            rejected = RejectedArticleURL(
+                url=item.url,
+                reason=f"Article too old: published_at={published_utc.isoformat()} (>{max_age_days} days)",
+                expires_at=datetime.utcnow() + timedelta(days=settings.rejected_url_expiry_days),
+            )
+            db.add(rejected)
+            await db.commit()
+            logger.info(f"Rejected old article: {item.title[:80]} (published {published_utc.date()})")
+            return False
+
+    # Convert timezone-aware datetime to naive (UTC) for database storage
+    if published_at and published_at.tzinfo is not None:
+        published_at = published_at.replace(tzinfo=None)
 
     # Calculate scores
     relevance = calculate_relevance_score(item, source.category)
     engagement = calculate_engagement_potential(item)
-
-    # Convert timezone-aware datetime to naive (UTC) for database storage
-    published_at = item.published_at
-    if published_at and published_at.tzinfo is not None:
-        published_at = published_at.replace(tzinfo=None)
 
     # Create article
     article = ScrapedArticle(
@@ -282,37 +309,56 @@ async def _save_article(
 @celery_app.task(bind=True)
 def cleanup_old_articles(self, days_old: int = 2):
     """
-    Delete all articles older than `days_old` days.
-    Fresh articles are scraped daily, so old ones are no longer relevant.
+    Delete articles older than `days_old` days by scraped_at OR published_at.
+    Also prunes expired entries from the rejected URLs table.
     """
-    logger.info(f"Cleaning up all articles older than {days_old} days")
+    logger.info(f"Cleaning up articles older than {days_old} days")
 
     async def _cleanup():
-        from sqlalchemy import delete as sql_delete, update as sql_update
+        from sqlalchemy import delete as sql_delete, update as sql_update, or_, and_
 
         async with AsyncSessionLocal() as db:
             cutoff = datetime.utcnow() - timedelta(days=days_old)
 
+            age_filter = or_(
+                ScrapedArticle.scraped_at < cutoff,
+                and_(
+                    ScrapedArticle.published_at.is_not(None),
+                    ScrapedArticle.published_at < cutoff,
+                ),
+            )
+
             # Clear FK references on articles we're about to delete
             await db.execute(
                 sql_update(ScrapedArticle)
-                .where(
-                    ScrapedArticle.used_in_post_id.is_not(None),
-                    ScrapedArticle.scraped_at < cutoff,
-                )
+                .where(ScrapedArticle.used_in_post_id.is_not(None), age_filter)
                 .values(used_in_post_id=None)
             )
 
-            # Delete all articles older than cutoff
+            # Delete old articles
             result = await db.execute(
-                sql_delete(ScrapedArticle).where(
-                    ScrapedArticle.scraped_at < cutoff,
+                sql_delete(ScrapedArticle).where(age_filter)
+            )
+            deleted_articles = result.rowcount
+
+            # Prune expired rejected URLs
+            result2 = await db.execute(
+                sql_delete(RejectedArticleURL).where(
+                    RejectedArticleURL.expires_at < datetime.utcnow()
                 )
             )
-            deleted = result.rowcount
+            pruned_urls = result2.rowcount
+
             await db.commit()
 
-            logger.info(f"Deleted {deleted} articles older than {days_old} days")
-            return {"deleted": deleted, "cutoff": str(cutoff)}
+            logger.info(
+                f"Cleanup: deleted {deleted_articles} old articles, "
+                f"pruned {pruned_urls} expired rejected URLs"
+            )
+            return {
+                "deleted_articles": deleted_articles,
+                "pruned_rejected_urls": pruned_urls,
+                "cutoff": str(cutoff),
+            }
 
     return run_async(_cleanup())

@@ -179,47 +179,61 @@ async def debug_articles():
 @app.post("/debug/cleanup-old-articles")
 async def debug_cleanup_old_articles(days_old: int = 2):
     """
-    Delete all articles older than `days_old` days.
-    No authentication required (debug endpoint).
+    Delete articles older than `days_old` days by scraped_at OR published_at.
+    Also prunes expired rejected URLs. No authentication required (debug endpoint).
     """
     from datetime import datetime, timedelta
-    from sqlalchemy import select, func, delete as sql_delete, update as sql_update
+    from sqlalchemy import select, func, delete as sql_delete, update as sql_update, or_, and_
     from app.database import AsyncSessionLocal
     from app.models.scraped_article import ScrapedArticle
+    from app.models.rejected_url import RejectedArticleURL
 
     try:
         async with AsyncSessionLocal() as db:
             cutoff = datetime.utcnow() - timedelta(days=days_old)
 
+            age_filter = or_(
+                ScrapedArticle.scraped_at < cutoff,
+                and_(
+                    ScrapedArticle.published_at.is_not(None),
+                    ScrapedArticle.published_at < cutoff,
+                ),
+            )
+
             # Count articles to be deleted
             count_result = await db.execute(
-                select(func.count(ScrapedArticle.id))
-                .where(ScrapedArticle.scraped_at < cutoff)
+                select(func.count(ScrapedArticle.id)).where(age_filter)
             )
             to_delete = count_result.scalar()
 
             # Clear FK references first
             await db.execute(
                 sql_update(ScrapedArticle)
-                .where(
-                    ScrapedArticle.used_in_post_id.is_not(None),
-                    ScrapedArticle.scraped_at < cutoff,
-                )
+                .where(ScrapedArticle.used_in_post_id.is_not(None), age_filter)
                 .values(used_in_post_id=None)
             )
 
             # Delete old articles
             result = await db.execute(
-                sql_delete(ScrapedArticle)
-                .where(ScrapedArticle.scraped_at < cutoff)
+                sql_delete(ScrapedArticle).where(age_filter)
             )
             deleted = result.rowcount
+
+            # Prune expired rejected URLs
+            result2 = await db.execute(
+                sql_delete(RejectedArticleURL).where(
+                    RejectedArticleURL.expires_at < datetime.utcnow()
+                )
+            )
+            pruned_urls = result2.rowcount
+
             await db.commit()
 
             return {
-                "deleted": deleted,
+                "deleted_articles": deleted,
+                "pruned_rejected_urls": pruned_urls,
                 "cutoff": str(cutoff),
-                "message": f"Deleted {deleted} articles older than {days_old} days",
+                "message": f"Deleted {deleted} articles older than {days_old} days, pruned {pruned_urls} expired rejected URLs",
             }
     except Exception as e:
         return {"error": str(e)}
