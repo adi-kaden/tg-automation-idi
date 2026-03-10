@@ -98,7 +98,7 @@ class TelegramPublisher:
         # Add channel link for attribution when forwarded
         channel_username = (settings.telegram_channel_id or "").lstrip("@")
         if channel_username:
-            message_parts.extend(["", f'<a href="https://t.me/{channel_username}">@{channel_username}</a>'])
+            message_parts.extend(["", f'Подписывайтесь на наш канал: <a href="https://t.me/{channel_username}">@{channel_username}</a>'])
 
         return "\n".join(message_parts)
 
