@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     telegram_bot_token: Optional[str] = None
     telegram_channel_id: Optional[str] = None
     telegram_smm_chat_id: Optional[str] = None
+    telegram_api_id: Optional[str] = None
+    telegram_api_hash: Optional[str] = None
+    telegram_session_string: Optional[str] = None
 
     # Timezone
     app_timezone: str = "Asia/Dubai"
@@ -57,6 +60,8 @@ class Settings(BaseSettings):
     # Scraping
     scrape_user_agent: str = "Mozilla/5.0 (compatible; TGContentBot/1.0)"
     scrape_request_delay_sec: int = 2
+    max_article_age_days: int = 2
+    rejected_url_expiry_days: int = 30
 
     # App Settings
     debug: bool = True

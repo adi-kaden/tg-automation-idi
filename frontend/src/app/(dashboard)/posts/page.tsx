@@ -1,91 +1,108 @@
 'use client';
 
 import { useState } from 'react';
-import { Eye, Heart, MessageCircle, Share2, ExternalLink, Calendar } from 'lucide-react';
+import {
+  Eye,
+  Forward,
+  ExternalLink,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { usePublishedPosts } from '@/hooks/use-api';
+import { PostDetailDrawer } from '@/components/posts/post-detail-drawer';
+import type { PublishedPostDetail } from '@/types';
 
-interface PublishedPost {
-  id: string;
-  title: string;
-  content_preview: string;
-  published_at: string;
-  content_type: 'real_estate' | 'general_dubai';
-  language: 'en' | 'ru';
-  views: number;
-  reactions: number;
-  comments: number;
-  shares: number;
-  telegram_link: string;
+type SortField = 'published_at' | 'views' | 'engagement_rate' | 'forwards';
+type ContentFilter = 'all' | 'real_estate' | 'general_dubai';
+
+function formatDubaiDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleString('en-US', {
+    timeZone: 'Asia/Dubai',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
-const mockPosts: PublishedPost[] = [
-  {
-    id: '1',
-    title: 'Dubai Marina Tower Launch - Premium Units Available',
-    content_preview: 'Exclusive pre-launch opportunity for luxury apartments in the heart of Dubai Marina...',
-    published_at: '2024-02-23T08:00:00Z',
-    content_type: 'real_estate',
-    language: 'en',
-    views: 2450,
-    reactions: 156,
-    comments: 23,
-    shares: 45,
-    telegram_link: 'https://t.me/channel/123',
-  },
-  {
-    id: '2',
-    title: 'Dubai Metro Expansion: New Blue Line Announced',
-    content_preview: 'Major infrastructure update: RTA announces new metro line connecting key residential areas...',
-    published_at: '2024-02-23T04:00:00Z',
-    content_type: 'general_dubai',
-    language: 'en',
-    views: 3200,
-    reactions: 234,
-    comments: 67,
-    shares: 89,
-    telegram_link: 'https://t.me/channel/122',
-  },
-  {
-    id: '3',
-    title: 'Новые апартаменты в Downtown Dubai',
-    content_preview: 'Эксклюзивные апартаменты с видом на Burj Khalifa теперь доступны для предзаказа...',
-    published_at: '2024-02-22T16:00:00Z',
-    content_type: 'real_estate',
-    language: 'ru',
-    views: 1890,
-    reactions: 98,
-    comments: 15,
-    shares: 34,
-    telegram_link: 'https://t.me/channel/121',
-  },
-  {
-    id: '4',
-    title: 'Weekend Events in Dubai: February 24-25',
-    content_preview: 'Top picks for this weekend including concerts, exhibitions, and family activities...',
-    published_at: '2024-02-22T12:00:00Z',
-    content_type: 'general_dubai',
-    language: 'en',
-    views: 4100,
-    reactions: 312,
-    comments: 45,
-    shares: 120,
-    telegram_link: 'https://t.me/channel/120',
-  },
-];
+function getTotalReactions(reactions: Record<string, number> | null | undefined): number {
+  if (!reactions) return 0;
+  return Object.values(reactions).reduce((sum, count) => sum + count, 0);
+}
+
+function SortIcon({ field, currentSort, currentOrder }: { field: SortField; currentSort: SortField; currentOrder: string }) {
+  if (field !== currentSort) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-40" />;
+  return currentOrder === 'desc'
+    ? <ArrowDown className="h-3 w-3 ml-1" />
+    : <ArrowUp className="h-3 w-3 ml-1" />;
+}
 
 export default function PostsPage() {
+  const [page, setPage] = useState(1);
+  const [perPage] = useState(20);
+  const [sortBy, setSortBy] = useState<SortField>('published_at');
+  const [sortOrder, setSortOrder] = useState('desc');
+  const [filterType, setFilterType] = useState<ContentFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterType, setFilterType] = useState<'all' | 'real_estate' | 'general_dubai'>('all');
+  const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const filteredPosts = mockPosts.filter((post) => {
-    const matchesSearch = post.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      post.content_preview.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesType = filterType === 'all' || post.content_type === filterType;
-    return matchesSearch && matchesType;
+  const { data, isLoading, isError } = usePublishedPosts({
+    page,
+    per_page: perPage,
+    content_type: filterType === 'all' ? undefined : filterType,
+    sort_by: sortBy,
+    sort_order: sortOrder,
   });
+
+  const handleSort = (field: SortField) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc');
+    } else {
+      setSortBy(field);
+      setSortOrder('desc');
+    }
+    setPage(1);
+  };
+
+  const handleFilterType = (type: ContentFilter) => {
+    setFilterType(type);
+    setPage(1);
+  };
+
+  const handleRowClick = (post: PublishedPostDetail) => {
+    setSelectedPostId(post.id);
+    setDrawerOpen(true);
+  };
+
+  // Client-side search filter on loaded data
+  const filteredItems = data?.items?.filter((post) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      post.posted_title.toLowerCase().includes(q) ||
+      post.posted_body.toLowerCase().includes(q)
+    );
+  }) ?? [];
+
+  const total = data?.total ?? 0;
+  const pages = data?.pages ?? 1;
 
   return (
     <div className="space-y-6">
@@ -93,12 +110,12 @@ export default function PostsPage() {
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
             Published Posts
-            <Badge variant="outline">{mockPosts.length} total posts</Badge>
+            <Badge variant="outline">{total} total posts</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
           {/* Filters */}
-          <div className="flex gap-4 mb-6">
+          <div className="flex gap-4 mb-6 flex-wrap">
             <Input
               placeholder="Search posts..."
               value={searchQuery}
@@ -109,86 +126,196 @@ export default function PostsPage() {
               <Button
                 variant={filterType === 'all' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setFilterType('all')}
+                onClick={() => handleFilterType('all')}
               >
                 All
               </Button>
               <Button
                 variant={filterType === 'real_estate' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setFilterType('real_estate')}
+                onClick={() => handleFilterType('real_estate')}
               >
                 Real Estate
               </Button>
               <Button
                 variant={filterType === 'general_dubai' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setFilterType('general_dubai')}
+                onClick={() => handleFilterType('general_dubai')}
               >
                 Dubai Trending
               </Button>
             </div>
           </div>
 
-          {/* Posts List */}
-          <div className="space-y-4">
-            {filteredPosts.map((post) => (
-              <div
-                key={post.id}
-                className="flex gap-4 rounded-lg border p-4 hover:bg-slate-50 transition-colors"
-              >
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant={post.content_type === 'real_estate' ? 'default' : 'secondary'}>
-                      {post.content_type === 'real_estate' ? 'Real Estate' : 'Trending'}
-                    </Badge>
-                    <Badge variant="outline">{post.language.toUpperCase()}</Badge>
-                    <span className="text-sm text-slate-500 flex items-center gap-1">
-                      <Calendar className="h-3 w-3" />
-                      {new Date(post.published_at).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
-                  </div>
-                  <h3 className="font-semibold mb-1">{post.title}</h3>
-                  <p className="text-sm text-slate-600 line-clamp-2">{post.content_preview}</p>
-
-                  {/* Stats */}
-                  <div className="flex items-center gap-4 mt-3 text-sm text-slate-500">
-                    <span className="flex items-center gap-1">
-                      <Eye className="h-4 w-4" />
-                      {post.views.toLocaleString()}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Heart className="h-4 w-4" />
-                      {post.reactions}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <MessageCircle className="h-4 w-4" />
-                      {post.comments}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Share2 className="h-4 w-4" />
-                      {post.shares}
-                    </span>
-                  </div>
-                </div>
-                <div>
-                  <Button variant="outline" size="sm" asChild>
-                    <a href={post.telegram_link} target="_blank" rel="noopener noreferrer">
-                      <ExternalLink className="h-4 w-4 mr-1" />
-                      View on Telegram
-                    </a>
-                  </Button>
-                </div>
+          {/* Table */}
+          {isLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-14 w-full" />
+              ))}
+            </div>
+          ) : isError ? (
+            <p className="text-sm text-red-500 text-center py-8">
+              Failed to load published posts. Please try again.
+            </p>
+          ) : filteredItems.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No published posts found.
+            </p>
+          ) : (
+            <>
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>
+                        <button
+                          className="flex items-center font-medium hover:text-foreground"
+                          onClick={() => handleSort('published_at')}
+                        >
+                          Date
+                          <SortIcon field="published_at" currentSort={sortBy} currentOrder={sortOrder} />
+                        </button>
+                      </TableHead>
+                      <TableHead className="min-w-[200px]">Title</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>
+                        <button
+                          className="flex items-center font-medium hover:text-foreground"
+                          onClick={() => handleSort('views')}
+                        >
+                          <Eye className="h-3.5 w-3.5 mr-1" />
+                          Views
+                          <SortIcon field="views" currentSort={sortBy} currentOrder={sortOrder} />
+                        </button>
+                      </TableHead>
+                      <TableHead>Reactions</TableHead>
+                      <TableHead>
+                        <button
+                          className="flex items-center font-medium hover:text-foreground"
+                          onClick={() => handleSort('forwards')}
+                        >
+                          <Forward className="h-3.5 w-3.5 mr-1" />
+                          Fwd
+                          <SortIcon field="forwards" currentSort={sortBy} currentOrder={sortOrder} />
+                        </button>
+                      </TableHead>
+                      <TableHead>
+                        <button
+                          className="flex items-center font-medium hover:text-foreground"
+                          onClick={() => handleSort('engagement_rate')}
+                        >
+                          Eng%
+                          <SortIcon field="engagement_rate" currentSort={sortBy} currentOrder={sortOrder} />
+                        </button>
+                      </TableHead>
+                      <TableHead className="w-10"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredItems.map((post) => (
+                      <TableRow
+                        key={post.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => handleRowClick(post)}
+                      >
+                        <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                          {formatDubaiDate(post.published_at)}
+                        </TableCell>
+                        <TableCell>
+                          <div className="max-w-[300px]">
+                            <p className="text-sm font-medium truncate">{post.posted_title}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            {post.content_type && (
+                              <Badge
+                                variant={post.content_type === 'real_estate' ? 'default' : 'secondary'}
+                                className="text-xs"
+                              >
+                                {post.content_type === 'real_estate' ? 'RE' : 'TR'}
+                              </Badge>
+                            )}
+                            <Badge variant="outline" className="text-xs">
+                              {post.posted_language.toUpperCase()}
+                            </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-medium">
+                          {post.analytics?.views?.toLocaleString() ?? '—'}
+                        </TableCell>
+                        <TableCell>
+                          {post.analytics ? getTotalReactions(post.analytics.reactions).toLocaleString() : '—'}
+                        </TableCell>
+                        <TableCell>
+                          {post.analytics?.forwards?.toLocaleString() ?? '—'}
+                        </TableCell>
+                        <TableCell>
+                          {post.analytics
+                            ? `${post.analytics.engagement_rate.toFixed(1)}%`
+                            : '—'}
+                        </TableCell>
+                        <TableCell>
+                          {post.telegram_link && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0"
+                              asChild
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <a href={post.telegram_link} target="_blank" rel="noopener noreferrer">
+                                <ExternalLink className="h-4 w-4" />
+                              </a>
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
-            ))}
-          </div>
+
+              {/* Pagination */}
+              {pages > 1 && (
+                <div className="flex items-center justify-between mt-4">
+                  <p className="text-sm text-muted-foreground">
+                    Page {page} of {pages}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page <= 1}
+                      onClick={() => setPage(page - 1)}
+                    >
+                      <ChevronLeft className="h-4 w-4 mr-1" />
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page >= pages}
+                      onClick={() => setPage(page + 1)}
+                    >
+                      Next
+                      <ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </CardContent>
       </Card>
+
+      {/* Detail Drawer */}
+      <PostDetailDrawer
+        postId={selectedPostId}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+      />
     </div>
   );
 }

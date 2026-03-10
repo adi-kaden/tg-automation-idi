@@ -193,5 +193,41 @@ class PublishedPostResponse(BaseModel):
         from_attributes = True
 
 
+# ==================== Analytics Response Schemas ====================
+
+class PostAnalyticsResponse(BaseModel):
+    """Analytics data for a published post."""
+    id: UUID
+    post_id: UUID
+    views: int = 0
+    forwards: int = 0
+    replies: int = 0
+    reactions: Optional[dict] = None
+    engagement_rate: float = 0.0
+    view_growth_1h: Optional[float] = None
+    view_growth_24h: Optional[float] = None
+    last_fetched_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PublishedPostDetailResponse(PublishedPostResponse):
+    """Extended published post with analytics and computed fields."""
+    analytics: Optional[PostAnalyticsResponse] = None
+    content_type: Optional[str] = None
+    telegram_link: Optional[str] = None
+    image_url_served: Optional[str] = None
+
+
+class PublishedPostListResponse(BaseModel):
+    """Paginated list of published posts."""
+    items: list[PublishedPostDetailResponse]
+    total: int
+    page: int
+    per_page: int
+    pages: int
+
+
 # Rebuild models for forward references
 ContentSlotDetail.model_rebuild()

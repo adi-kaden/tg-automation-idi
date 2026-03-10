@@ -31,15 +31,15 @@ def run_async(coro):
         loop.close()
 
 
-@celery_app.task(bind=True, max_retries=2)
-def collect_post_analytics(self, hours_back: int = 48):
+@celery_app.task(bind=True, max_retries=3)
+def collect_post_analytics(self, days_back: int = 7):
     """
-    Collect analytics for recently published posts.
+    Collect analytics for recently published posts using Telethon.
 
     Args:
-        hours_back: How far back to look for posts to update
+        days_back: How far back to look for posts to update
     """
-    logger.info(f"Collecting post analytics for last {hours_back} hours")
+    logger.info(f"Collecting post analytics for last {days_back} days")
 
     async def _collect():
         try:
@@ -48,16 +48,30 @@ def collect_post_analytics(self, hours_back: int = 48):
             logger.error(f"Analytics collector not configured: {e}")
             return {"error": str(e)}
 
-        AsyncSessionLocal = get_async_session()
-        async with AsyncSessionLocal() as db:
-            result = await collector.collect_all_post_analytics(db, hours_back=hours_back)
-            return result
+        await collector.connect()
+        try:
+            AsyncSessionLocal = get_async_session()
+            async with AsyncSessionLocal() as db:
+                result = await collector.collect_all_post_analytics(db, days_back=days_back)
+                return result
+        finally:
+            await collector.disconnect()
 
     try:
         return run_async(_collect())
     except Exception as e:
+        # Handle FloodWait if telethon is available
+        try:
+            from telethon.errors import FloodWaitError
+            if isinstance(e, FloodWaitError):
+                logger.warning(f"FloodWait: retrying in {e.seconds + 5}s")
+                self.retry(countdown=e.seconds + 5, exc=e)
+                return
+        except ImportError:
+            pass
+
         logger.error(f"Failed to collect post analytics: {e}")
-        self.retry(countdown=300, exc=e)
+        self.retry(countdown=60, exc=e)
 
 
 @celery_app.task(bind=True, max_retries=2)
@@ -98,9 +112,6 @@ def create_daily_channel_snapshot(self, snapshot_date_str: str = None):
 def backfill_snapshots(self, days: int = 7):
     """
     Backfill missing channel snapshots for the past N days.
-
-    Args:
-        days: Number of days to backfill
     """
     logger.info(f"Backfilling channel snapshots for last {days} days")
 
@@ -123,9 +134,6 @@ def backfill_snapshots(self, days: int = 7):
 def get_analytics_summary(self, days: int = 7):
     """
     Get analytics summary for dashboard.
-
-    Args:
-        days: Number of days to include in summary
     """
     logger.info(f"Getting analytics summary for last {days} days")
 

@@ -298,8 +298,9 @@ async def get_top_posts(
     cutoff = datetime.utcnow() - timedelta(days=days)
 
     result = await db.execute(
-        select(PublishedPost, PostAnalytics)
+        select(PublishedPost, PostAnalytics, ContentSlot.content_type)
         .join(PostAnalytics, PostAnalytics.post_id == PublishedPost.id)
+        .join(ContentSlot, ContentSlot.id == PublishedPost.slot_id)
         .where(PublishedPost.published_at >= cutoff)
         .order_by(PostAnalytics.views.desc())
         .limit(limit)
@@ -313,9 +314,9 @@ async def get_top_posts(
             published_at=post.published_at,
             views=analytics.views,
             engagement_rate=analytics.engagement_rate,
-            content_type=post.posted_language,  # Using language as proxy for now
+            content_type=ct or post.posted_language,
         )
-        for post, analytics in rows
+        for post, analytics, ct in rows
     ]
 
 

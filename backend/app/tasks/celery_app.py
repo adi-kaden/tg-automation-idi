@@ -118,11 +118,11 @@ celery_app.conf.beat_schedule = {
 
     # ==================== Analytics Collection ====================
 
-    # Collect post analytics every 6 hours
+    # Collect post analytics every 5 minutes (last 7 days of posts)
     "collect-post-analytics": {
         "task": "app.tasks.analytics_tasks.collect_post_analytics",
-        "schedule": crontab(hour="*/6", minute=15),
-        "kwargs": {"hours_back": 48},
+        "schedule": crontab(minute="*/5"),
+        "kwargs": {"days_back": 7},
     },
 
     # Create daily channel snapshot at 23:00 Dubai = 19:00 UTC

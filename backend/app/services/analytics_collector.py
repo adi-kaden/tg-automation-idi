@@ -3,22 +3,15 @@ Analytics Collector Service.
 
 Collects engagement metrics from Telegram for published posts and channel stats.
 
-Note: The Telegram Bot API has limited access to message statistics.
-- Subscriber count: Available via getChat
-- Message views: Not available via Bot API (would need MTProto/Telethon)
-- Reactions: Available for messages in groups/channels where bot is admin
-
-For production use, consider:
-1. Using Telegram's native channel statistics (channel owner only)
-2. Implementing MTProto client for full stats access
-3. Manual data entry for view counts
+Uses Telethon (MTProto API) for per-message analytics (views, reactions, forwards)
+and python-telegram-bot (Bot API) for channel-level stats (subscriber count).
 """
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, date, timedelta
 from typing import Optional
-from uuid import UUID
 
 from telegram import Bot
 from telegram.error import TelegramError
@@ -54,12 +47,8 @@ class PostStats:
 
 class AnalyticsCollector:
     """
-    Collect analytics from Telegram.
-
-    Limitations:
-    - Bot API doesn't expose view counts for channel messages
-    - Reactions available only if bot has appropriate permissions
-    - For full analytics, use MTProto API (Telethon/Pyrogram)
+    Collect analytics from Telegram using Telethon (MTProto) for message stats
+    and Bot API for channel-level stats.
     """
 
     def __init__(self):
@@ -70,21 +59,64 @@ class AnalyticsCollector:
 
         self.bot = Bot(token=settings.telegram_bot_token)
         self.channel_id = settings.telegram_channel_id
+        self._telethon_client = None
+        self._channel_entity = None
+
+    async def connect(self):
+        """Initialize and connect the Telethon client."""
+        if not all([settings.telegram_api_id, settings.telegram_api_hash, settings.telegram_session_string]):
+            logger.warning("Telethon not configured (missing TELEGRAM_API_ID, TELEGRAM_API_HASH, or TELEGRAM_SESSION_STRING)")
+            return
+
+        try:
+            from telethon import TelegramClient
+            from telethon.sessions import StringSession
+
+            self._telethon_client = TelegramClient(
+                StringSession(settings.telegram_session_string),
+                int(settings.telegram_api_id),
+                settings.telegram_api_hash,
+            )
+            await self._telethon_client.connect()
+
+            if not await self._telethon_client.is_user_authorized():
+                logger.error("Telethon session is not authorized. Run generate_telethon_session.py again.")
+                self._telethon_client = None
+                return
+
+            # Cache the channel entity
+            self._channel_entity = await self._telethon_client.get_entity(self.channel_id)
+            logger.info(f"Telethon connected to channel: {self._channel_entity.title}")
+
+        except Exception as e:
+            logger.error(f"Failed to connect Telethon: {e}")
+            self._telethon_client = None
+
+    async def disconnect(self):
+        """Disconnect the Telethon client."""
+        if self._telethon_client:
+            try:
+                await self._telethon_client.disconnect()
+            except Exception as e:
+                logger.warning(f"Error disconnecting Telethon: {e}")
+            finally:
+                self._telethon_client = None
+                self._channel_entity = None
+
+    @property
+    def has_telethon(self) -> bool:
+        """Check if Telethon client is connected and ready."""
+        return self._telethon_client is not None and self._channel_entity is not None
 
     async def get_channel_stats(self) -> Optional[ChannelStats]:
         """
-        Get current channel statistics.
-
-        Returns:
-            ChannelStats with subscriber count and channel info
+        Get current channel statistics using Bot API.
         """
         try:
             chat = await self.bot.get_chat(self.channel_id)
 
-            # member_count may not be available for all channel types
             subscriber_count = getattr(chat, "member_count", None)
             if subscriber_count is None:
-                # Try to get member count explicitly
                 try:
                     count = await self.bot.get_chat_member_count(self.channel_id)
                     subscriber_count = count
@@ -104,40 +136,94 @@ class AnalyticsCollector:
 
     async def get_post_stats(self, message_id: int) -> Optional[PostStats]:
         """
-        Get statistics for a specific post.
+        Get statistics for a specific post using Telethon.
+        """
+        if not self.has_telethon:
+            logger.debug(f"Telethon not available, returning zeros for message {message_id}")
+            return PostStats(message_id=message_id)
 
-        Note: Bot API doesn't provide view counts for channel messages.
-        This method returns what's available (reactions if accessible).
+        try:
+            messages = await self._telethon_client.get_messages(
+                self._channel_entity, ids=message_id
+            )
+            msg = messages if not isinstance(messages, list) else (messages[0] if messages else None)
 
-        Args:
-            message_id: Telegram message ID
+            if not msg:
+                logger.warning(f"Message {message_id} not found in channel")
+                return PostStats(message_id=message_id)
+
+            return self._parse_message_stats(msg)
+
+        except Exception as e:
+            logger.error(f"Failed to get post stats for message {message_id}: {e}")
+            return PostStats(message_id=message_id)
+
+    async def get_batch_post_stats(self, message_ids: list[int]) -> dict[int, PostStats]:
+        """
+        Get statistics for multiple posts in a single Telethon call.
 
         Returns:
-            PostStats with available metrics
+            Dict mapping message_id to PostStats
         """
+        if not self.has_telethon or not message_ids:
+            return {mid: PostStats(message_id=mid) for mid in message_ids}
+
         try:
-            # Note: Bot API doesn't have a direct method to get message stats
-            # We can only copy/forward messages, not read their stats
-            # Reactions are also not directly accessible via standard Bot API
+            from telethon.errors import FloodWaitError
 
-            # Return placeholder - in production, this would need:
-            # 1. MTProto client (Telethon/Pyrogram) for full stats
-            # 2. Webhook to receive updates about reactions
-            # 3. Manual entry mechanism
-
-            logger.debug(f"Post stats requested for message {message_id} - Bot API limitations apply")
-
-            return PostStats(
-                message_id=message_id,
-                views=0,  # Not available via Bot API
-                forwards=0,  # Not available via Bot API
-                replies=0,  # Would need to track separately
-                reactions={},  # Would need webhook or MTProto
+            messages = await self._telethon_client.get_messages(
+                self._channel_entity, ids=message_ids
             )
 
-        except TelegramError as e:
-            logger.error(f"Failed to get post stats for message {message_id}: {e}")
-            return None
+            results = {}
+            for msg in messages:
+                if msg is None:
+                    continue
+                results[msg.id] = self._parse_message_stats(msg)
+
+            # Fill in any missing message IDs with empty stats
+            for mid in message_ids:
+                if mid not in results:
+                    results[mid] = PostStats(message_id=mid)
+
+            return results
+
+        except Exception as e:
+            # Import here to handle case where telethon isn't installed
+            try:
+                from telethon.errors import FloodWaitError
+                if isinstance(e, FloodWaitError):
+                    logger.warning(f"FloodWait: need to wait {e.seconds}s")
+                    await asyncio.sleep(e.seconds)
+                    # Retry once
+                    return await self.get_batch_post_stats(message_ids)
+            except ImportError:
+                pass
+
+            logger.error(f"Failed to get batch post stats: {e}")
+            return {mid: PostStats(message_id=mid) for mid in message_ids}
+
+    def _parse_message_stats(self, msg) -> PostStats:
+        """Parse a Telethon Message object into PostStats."""
+        views = msg.views or 0
+        forwards = msg.forwards or 0
+        replies = 0
+        if msg.replies:
+            replies = msg.replies.replies or 0
+
+        reactions = {}
+        if msg.reactions and msg.reactions.results:
+            for r in msg.reactions.results:
+                emoji = getattr(r.reaction, 'emoticon', None) or str(r.reaction)
+                reactions[emoji] = r.count
+
+        return PostStats(
+            message_id=msg.id,
+            views=views,
+            forwards=forwards,
+            replies=replies,
+            reactions=reactions,
+        )
 
     def calculate_engagement_rate(
         self,
@@ -150,15 +236,6 @@ class AnalyticsCollector:
         Calculate engagement rate.
 
         Formula: (forwards + replies + reactions) / views * 100
-
-        Args:
-            views: Number of views
-            forwards: Number of forwards
-            replies: Number of replies
-            reactions_total: Total reaction count
-
-        Returns:
-            Engagement rate as percentage (0-100)
         """
         if views == 0:
             return 0.0
@@ -169,24 +246,21 @@ class AnalyticsCollector:
     async def collect_all_post_analytics(
         self,
         db_session,
-        hours_back: int = 48,
+        days_back: int = 7,
     ) -> dict:
         """
-        Collect analytics for recent published posts.
+        Collect analytics for recent published posts using batch Telethon calls.
 
         Args:
             db_session: Database session
-            hours_back: How far back to look for posts
-
-        Returns:
-            Summary of collection results
+            days_back: How far back to look for posts (default 7 days)
         """
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload
         from app.models.published_post import PublishedPost
         from app.models.post_analytics import PostAnalytics
 
-        cutoff = datetime.utcnow() - timedelta(hours=hours_back)
+        cutoff = datetime.utcnow() - timedelta(days=days_back)
 
         # Get recent published posts
         result = await db_session.execute(
@@ -196,24 +270,30 @@ class AnalyticsCollector:
         )
         posts = result.scalars().all()
 
+        # Collect message IDs for batch fetch
+        posts_with_msg_id = [p for p in posts if p.telegram_message_id]
+        message_ids = [p.telegram_message_id for p in posts_with_msg_id]
+
+        if not message_ids:
+            logger.info("No published posts with telegram_message_id found")
+            return {"posts_processed": 0, "updated": 0, "created": 0, "errors": 0}
+
+        # Batch fetch all stats in one API call
+        all_stats = await self.get_batch_post_stats(message_ids)
+
         updated = 0
         created = 0
         errors = 0
+        now = datetime.utcnow()
 
-        for post in posts:
-            if not post.telegram_message_id:
-                continue
-
+        for post in posts_with_msg_id:
             try:
-                stats = await self.get_post_stats(post.telegram_message_id)
+                stats = all_stats.get(post.telegram_message_id)
                 if not stats:
                     errors += 1
                     continue
 
-                # Calculate total reactions
                 reactions_total = sum(stats.reactions.values()) if stats.reactions else 0
-
-                # Calculate engagement rate
                 engagement_rate = self.calculate_engagement_rate(
                     views=stats.views,
                     forwards=stats.forwards,
@@ -222,10 +302,7 @@ class AnalyticsCollector:
                 )
 
                 if post.analytics:
-                    # Update existing analytics
                     analytics = post.analytics
-
-                    # Store previous values for growth calculation
                     prev_views = analytics.views
 
                     analytics.views = stats.views
@@ -233,15 +310,15 @@ class AnalyticsCollector:
                     analytics.replies = stats.replies
                     analytics.reactions = json.dumps(stats.reactions) if stats.reactions else None
                     analytics.engagement_rate = engagement_rate
-                    analytics.last_fetched_at = datetime.utcnow()
+                    analytics.last_fetched_at = now
 
-                    # Calculate view growth (if we have previous data)
+                    # Calculate view growth
                     if prev_views > 0 and stats.views > 0:
                         analytics.view_growth_1h = round(
                             ((stats.views - prev_views) / prev_views) * 100, 2
                         )
 
-                    # Append to hourly snapshots
+                    # Calculate 24h growth from snapshots
                     snapshots = []
                     if analytics.hourly_snapshots:
                         try:
@@ -249,19 +326,39 @@ class AnalyticsCollector:
                         except json.JSONDecodeError:
                             snapshots = []
 
+                    # Find snapshot closest to 24h ago for growth calculation
+                    target_time = now - timedelta(hours=24)
+                    if snapshots:
+                        closest_snapshot = None
+                        closest_diff = float('inf')
+                        for snap in snapshots:
+                            try:
+                                snap_time = datetime.fromisoformat(snap["timestamp"])
+                                diff = abs((snap_time - target_time).total_seconds())
+                                if diff < closest_diff:
+                                    closest_diff = diff
+                                    closest_snapshot = snap
+                            except (KeyError, ValueError):
+                                continue
+
+                        if closest_snapshot and closest_snapshot.get("views", 0) > 0:
+                            old_views = closest_snapshot["views"]
+                            analytics.view_growth_24h = round(
+                                ((stats.views - old_views) / old_views) * 100, 2
+                            )
+
+                    # Append new snapshot
                     snapshots.append({
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "timestamp": now.isoformat(),
                         "views": stats.views,
                         "forwards": stats.forwards,
                         "reactions": reactions_total,
                     })
 
-                    # Keep only last 48 snapshots (48 hours at hourly intervals)
-                    analytics.hourly_snapshots = json.dumps(snapshots[-48:])
-
+                    # Keep last 2016 snapshots (7 days at 5-min intervals)
+                    analytics.hourly_snapshots = json.dumps(snapshots[-2016:])
                     updated += 1
                 else:
-                    # Create new analytics record
                     analytics = PostAnalytics(
                         post_id=post.id,
                         views=stats.views,
@@ -270,7 +367,7 @@ class AnalyticsCollector:
                         reactions=json.dumps(stats.reactions) if stats.reactions else None,
                         engagement_rate=engagement_rate,
                         hourly_snapshots=json.dumps([{
-                            "timestamp": datetime.utcnow().isoformat(),
+                            "timestamp": now.isoformat(),
                             "views": stats.views,
                             "forwards": stats.forwards,
                             "reactions": reactions_total,
@@ -285,8 +382,13 @@ class AnalyticsCollector:
 
         await db_session.commit()
 
+        logger.info(
+            f"Analytics collection: {len(posts_with_msg_id)} posts, "
+            f"{updated} updated, {created} created, {errors} errors"
+        )
+
         return {
-            "posts_processed": len(posts),
+            "posts_processed": len(posts_with_msg_id),
             "updated": updated,
             "created": created,
             "errors": errors,
@@ -295,13 +397,6 @@ class AnalyticsCollector:
     async def create_daily_snapshot(self, db_session, snapshot_date: date = None) -> dict:
         """
         Create a daily channel snapshot.
-
-        Args:
-            db_session: Database session
-            snapshot_date: Date for snapshot (defaults to today)
-
-        Returns:
-            Snapshot data
         """
         from sqlalchemy import select, func
         from app.models.channel_snapshot import ChannelSnapshot
@@ -311,7 +406,6 @@ class AnalyticsCollector:
         if not snapshot_date:
             snapshot_date = date.today()
 
-        # Check if snapshot already exists
         existing = await db_session.execute(
             select(ChannelSnapshot).where(ChannelSnapshot.snapshot_date == snapshot_date)
         )
@@ -319,11 +413,9 @@ class AnalyticsCollector:
             logger.info(f"Snapshot for {snapshot_date} already exists")
             return {"status": "exists", "date": str(snapshot_date)}
 
-        # Get channel stats
         channel_stats = await self.get_channel_stats()
         subscriber_count = channel_stats.subscriber_count if channel_stats else 0
 
-        # Get previous day's snapshot for growth calculation
         prev_date = snapshot_date - timedelta(days=1)
         prev_result = await db_session.execute(
             select(ChannelSnapshot).where(ChannelSnapshot.snapshot_date == prev_date)
@@ -333,14 +425,12 @@ class AnalyticsCollector:
         if prev_snapshot:
             subscriber_growth = subscriber_count - prev_snapshot.subscriber_count
 
-        # Count posts published on this date
         posts_result = await db_session.execute(
             select(func.count(PublishedPost.id))
             .where(func.date(PublishedPost.published_at) == snapshot_date)
         )
         posts_published = posts_result.scalar() or 0
 
-        # Calculate average views and engagement for posts on this date
         analytics_result = await db_session.execute(
             select(
                 func.avg(PostAnalytics.views),
@@ -353,7 +443,6 @@ class AnalyticsCollector:
         avg_views = row[0] if row and row[0] else 0.0
         avg_engagement = row[1] if row and row[1] else 0.0
 
-        # Find top post (highest views) for the date
         top_post_result = await db_session.execute(
             select(PostAnalytics.post_id)
             .join(PublishedPost)
@@ -364,7 +453,6 @@ class AnalyticsCollector:
         top_post_row = top_post_result.one_or_none()
         top_post_id = top_post_row[0] if top_post_row else None
 
-        # Create snapshot
         snapshot = ChannelSnapshot(
             snapshot_date=snapshot_date,
             subscriber_count=subscriber_count,
@@ -392,13 +480,6 @@ class AnalyticsCollector:
     async def get_analytics_summary(self, db_session, days: int = 7) -> dict:
         """
         Get analytics summary for the dashboard.
-
-        Args:
-            db_session: Database session
-            days: Number of days to include
-
-        Returns:
-            Summary statistics
         """
         from sqlalchemy import select, func
         from app.models.channel_snapshot import ChannelSnapshot
@@ -407,7 +488,6 @@ class AnalyticsCollector:
 
         cutoff_date = date.today() - timedelta(days=days)
 
-        # Get latest channel snapshot
         latest_snapshot_result = await db_session.execute(
             select(ChannelSnapshot)
             .order_by(ChannelSnapshot.snapshot_date.desc())
@@ -415,14 +495,12 @@ class AnalyticsCollector:
         )
         latest_snapshot = latest_snapshot_result.scalar_one_or_none()
 
-        # Get total posts in period
         posts_count_result = await db_session.execute(
             select(func.count(PublishedPost.id))
             .where(func.date(PublishedPost.published_at) >= cutoff_date)
         )
         total_posts = posts_count_result.scalar() or 0
 
-        # Get total views in period
         views_result = await db_session.execute(
             select(func.sum(PostAnalytics.views))
             .join(PublishedPost)
@@ -430,7 +508,6 @@ class AnalyticsCollector:
         )
         total_views = views_result.scalar() or 0
 
-        # Get average engagement
         avg_engagement_result = await db_session.execute(
             select(func.avg(PostAnalytics.engagement_rate))
             .join(PublishedPost)
@@ -438,7 +515,6 @@ class AnalyticsCollector:
         )
         avg_engagement = avg_engagement_result.scalar() or 0.0
 
-        # Get subscriber growth over period
         snapshots_result = await db_session.execute(
             select(ChannelSnapshot)
             .where(ChannelSnapshot.snapshot_date >= cutoff_date)
