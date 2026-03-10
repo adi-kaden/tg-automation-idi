@@ -80,13 +80,22 @@ Note: No text or watermarks in the image"""
 
 async def _get_or_create_global(db: AsyncSession) -> PromptConfig:
     """Get the global config, creating with defaults if it doesn't exist."""
-    result = await db.execute(
-        select(PromptConfig).where(
-            PromptConfig.scope == "global",
-            PromptConfig.is_active == True,
+    try:
+        result = await db.execute(
+            select(PromptConfig).where(
+                PromptConfig.scope == "global",
+                PromptConfig.is_active == True,
+            )
         )
-    )
-    config = result.scalar_one_or_none()
+        config = result.scalar_one_or_none()
+    except Exception as e:
+        # Table may not exist yet — create it on the fly
+        logger.warning(f"prompt_configs table query failed, creating table: {e}")
+        await db.rollback()
+        from app.database import engine
+        async with engine.begin() as conn:
+            await conn.run_sync(PromptConfig.__table__.create, checkfirst=True)
+        config = None
 
     if not config:
         config = PromptConfig(
