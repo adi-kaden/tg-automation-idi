@@ -346,22 +346,30 @@ export const api = {
     list: async (params?: {
       page?: number;
       per_page?: number;
-      category?: string;
+      content_type?: string;
       language?: string;
+      date_from?: string;
+      date_to?: string;
+      sort_by?: string;
+      sort_order?: string;
     }) => {
       const queryParams = new URLSearchParams();
       if (params?.page) queryParams.set('page', params.page.toString());
       if (params?.per_page) queryParams.set('per_page', params.per_page.toString());
-      if (params?.category) queryParams.set('category', params.category);
+      if (params?.content_type) queryParams.set('content_type', params.content_type);
       if (params?.language) queryParams.set('language', params.language);
+      if (params?.date_from) queryParams.set('date_from', params.date_from);
+      if (params?.date_to) queryParams.set('date_to', params.date_to);
+      if (params?.sort_by) queryParams.set('sort_by', params.sort_by);
+      if (params?.sort_order) queryParams.set('sort_order', params.sort_order);
       const query = queryParams.toString();
-      return fetchWithAuth<import('@/types').PaginatedResponse<import('@/types').PublishedPost>>(
+      return fetchWithAuth<import('@/types').PaginatedResponse<import('@/types').PublishedPostDetail>>(
         `/published-posts${query ? `?${query}` : ''}`
       );
     },
 
     get: async (id: string) => {
-      return fetchWithAuth<import('@/types').PublishedPost>(`/published-posts/${id}`);
+      return fetchWithAuth<import('@/types').PublishedPostDetail>(`/published-posts/${id}`);
     },
   },
 
@@ -420,33 +428,44 @@ export const api = {
     },
   },
 
-  // Templates
-  templates: {
-    list: async () => {
-      return fetchWithAuth<import('@/types').PostTemplate[]>('/templates');
+  // Prompt Config
+  prompts: {
+    getGlobalConfig: async () => {
+      return fetchWithAuth<import('@/types').PromptConfig>('/prompts/config');
     },
 
-    get: async (id: string) => {
-      return fetchWithAuth<import('@/types').PostTemplate>(`/templates/${id}`);
+    updateGlobalConfig: async (data: import('@/types').PromptConfigUpdate) => {
+      return fetchWithAuth<import('@/types').PromptConfig>('/prompts/config', {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      });
     },
 
-    create: async (data: Partial<import('@/types').PostTemplate>) => {
-      return fetchWithAuth<import('@/types').PostTemplate>('/templates', {
+    getSlotOverrides: async () => {
+      return fetchWithAuth<import('@/types').SlotOverride[]>('/prompts/slots');
+    },
+
+    getSlotOverride: async (slotNumber: number) => {
+      return fetchWithAuth<import('@/types').PromptConfig>(`/prompts/slots/${slotNumber}`);
+    },
+
+    setSlotOverride: async (slotNumber: number, data: import('@/types').PromptConfigUpdate) => {
+      return fetchWithAuth<import('@/types').PromptConfig>(`/prompts/slots/${slotNumber}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      });
+    },
+
+    deleteSlotOverride: async (slotNumber: number) => {
+      return fetchWithAuth<import('@/types').MessageResponse>(`/prompts/slots/${slotNumber}`, {
+        method: 'DELETE',
+      });
+    },
+
+    testGenerate: async (data: import('@/types').TestGenerateRequest) => {
+      return fetchWithAuth<import('@/types').TestGenerateResponse>('/prompts/test-generate', {
         method: 'POST',
         body: JSON.stringify(data),
-      });
-    },
-
-    update: async (id: string, data: Partial<import('@/types').PostTemplate>) => {
-      return fetchWithAuth<import('@/types').PostTemplate>(`/templates/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      });
-    },
-
-    delete: async (id: string) => {
-      return fetchWithAuth<import('@/types').MessageResponse>(`/templates/${id}`, {
-        method: 'DELETE',
       });
     },
   },

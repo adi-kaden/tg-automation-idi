@@ -12,7 +12,7 @@ const routeTitles: Record<string, string> = {
   '/scraper': 'Scraper',
   '/scraper/sources': 'Scraper Sources',
   '/analytics': 'Analytics',
-  '/templates': 'Templates',
+  '/prompts': 'AI Prompts',
   '/settings': 'Settings',
 };
 

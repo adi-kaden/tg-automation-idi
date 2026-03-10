@@ -231,12 +231,18 @@ export function useTopPosts(limit = 10) {
 
 export function usePublishedPosts(params?: {
   page?: number;
-  category?: string;
+  per_page?: number;
+  content_type?: string;
   language?: string;
+  date_from?: string;
+  date_to?: string;
+  sort_by?: string;
+  sort_order?: string;
 }) {
   return useQuery({
     queryKey: queryKeys.posts.list(params),
     queryFn: () => api.publishedPosts.list(params),
+    refetchInterval: 300000, // 5 minutes
   });
 }
 
@@ -245,6 +251,65 @@ export function usePublishedPost(id: string) {
     queryKey: queryKeys.posts.detail(id),
     queryFn: () => api.publishedPosts.get(id),
     enabled: !!id,
+    refetchInterval: 300000, // 5 minutes
+  });
+}
+
+// ==================== Prompt Config Hooks ====================
+
+export function usePromptGlobalConfig() {
+  return useQuery({
+    queryKey: ['prompts', 'global'] as const,
+    queryFn: api.prompts.getGlobalConfig,
+  });
+}
+
+export function usePromptSlotOverrides() {
+  return useQuery({
+    queryKey: ['prompts', 'slots'] as const,
+    queryFn: api.prompts.getSlotOverrides,
+  });
+}
+
+export function useUpdateGlobalConfig() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: import('@/types').PromptConfigUpdate) =>
+      api.prompts.updateGlobalConfig(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['prompts'] });
+    },
+  });
+}
+
+export function useSetSlotOverride() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ slotNumber, data }: { slotNumber: number; data: import('@/types').PromptConfigUpdate }) =>
+      api.prompts.setSlotOverride(slotNumber, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['prompts'] });
+    },
+  });
+}
+
+export function useDeleteSlotOverride() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (slotNumber: number) => api.prompts.deleteSlotOverride(slotNumber),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['prompts'] });
+    },
+  });
+}
+
+export function useTestGenerate() {
+  return useMutation({
+    mutationFn: (data: import('@/types').TestGenerateRequest) =>
+      api.prompts.testGenerate(data),
   });
 }
 

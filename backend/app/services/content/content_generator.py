@@ -52,8 +52,13 @@ def _build_generation_prompt(
     content_type: str,
     category: str,
     template: Optional[dict] = None,
+    prompt_config: Optional[dict] = None,
 ) -> str:
-    """Build the prompt for content generation."""
+    """Build the prompt for content generation.
+
+    If prompt_config is provided with a generation_prompt template,
+    it replaces the hardcoded prompt with variable substitution.
+    """
 
     # Format article information
     articles_text = "\n\n".join([
@@ -83,6 +88,24 @@ def _build_generation_prompt(
     guidance = content_type_guidance.get(content_type, content_type_guidance["general_dubai"])
     topic_focus = category_topics.get(category, category_topics["general"])
 
+    # If we have a prompt_config with generation_prompt template, use it
+    if prompt_config and prompt_config.get("generation_prompt"):
+        tone = prompt_config.get("tone", "professional")
+        max_length = prompt_config.get("max_length_chars", 1500)
+        generation_template = prompt_config["generation_prompt"]
+
+        # Replace template variables
+        return (
+            generation_template
+            .replace("{{articles}}", articles_text)
+            .replace("{{content_type}}", content_type)
+            .replace("{{category}}", f"{category} ({topic_focus})")
+            .replace("{{tone}}", tone)
+            .replace("{{max_length}}", str(max_length))
+            .replace("{{guidance}}", guidance)
+        )
+
+    # Legacy: support old template dict
     template_section = ""
     if template:
         template_section = f"""
@@ -136,6 +159,7 @@ class ContentGenerator:
         content_type: str,
         category: str,
         template: Optional[dict] = None,
+        prompt_config: Optional[dict] = None,
     ) -> GeneratedPost:
         """
         Generate a bilingual Telegram post from source articles.
@@ -144,7 +168,8 @@ class ContentGenerator:
             articles: List of scraped article dicts (title, summary, url)
             content_type: "real_estate" or "general_dubai"
             category: Specific category (real_estate_news, lifestyle, etc.)
-            template: Optional template dict for style guidance
+            template: Optional template dict for style guidance (legacy)
+            prompt_config: Optional dict with system_prompt, generation_prompt, tone, etc.
 
         Returns:
             GeneratedPost with bilingual content
@@ -152,7 +177,12 @@ class ContentGenerator:
         if not articles:
             raise ValueError("At least one article required for generation")
 
-        prompt = _build_generation_prompt(articles, content_type, category, template)
+        prompt = _build_generation_prompt(articles, content_type, category, template, prompt_config)
+
+        # Use system prompt from config if available, otherwise default
+        system_prompt = SYSTEM_PROMPT
+        if prompt_config and prompt_config.get("system_prompt"):
+            system_prompt = prompt_config["system_prompt"]
 
         logger.info(f"Generating post for {content_type}/{category} from {len(articles)} articles")
 
@@ -160,7 +190,7 @@ class ContentGenerator:
             message = self.client.messages.create(
                 model=self.model,
                 max_tokens=2000,
-                system=SYSTEM_PROMPT,
+                system=system_prompt,
                 messages=[
                     {"role": "user", "content": prompt}
                 ],

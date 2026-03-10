@@ -141,6 +141,13 @@ export interface PostAnalytics {
   last_fetched_at: string;
 }
 
+// Published Post with computed fields from API
+export interface PublishedPostDetail extends PublishedPost {
+  content_type?: string;
+  telegram_link?: string;
+  image_url_served?: string;
+}
+
 // Channel Snapshot types
 export interface ChannelSnapshot {
   id: string;
@@ -153,7 +160,7 @@ export interface ChannelSnapshot {
   top_post_id: string | null;
 }
 
-// Post Template types
+// Post Template types (legacy)
 export interface PostTemplate {
   id: string;
   name: string;
@@ -167,6 +174,56 @@ export interface PostTemplate {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+// Prompt Config types
+export interface PromptConfig {
+  id: string;
+  scope: 'global' | 'slot_override';
+  slot_number: number | null;
+  system_prompt: string;
+  generation_prompt: string;
+  tone: string;
+  max_length_chars: number;
+  image_style_prompt: string;
+  image_aspect_ratio: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromptConfigUpdate {
+  system_prompt?: string;
+  generation_prompt?: string;
+  tone?: string;
+  max_length_chars?: number;
+  image_style_prompt?: string;
+  image_aspect_ratio?: string;
+}
+
+export interface SlotOverride {
+  slot_number: number;
+  has_override: boolean;
+  config: PromptConfig | null;
+}
+
+export interface TestGenerateRequest {
+  system_prompt: string;
+  generation_prompt: string;
+  tone: string;
+  max_length_chars: number;
+  image_style_prompt: string;
+  image_aspect_ratio: string;
+  slot_number?: number;
+}
+
+export interface TestGenerateResponse {
+  title_ru: string;
+  body_ru: string;
+  image_prompt: string;
+  quality_score: number;
+  image_base64: string | null;
+  articles_used: number;
 }
 
 // Setting types

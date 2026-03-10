@@ -10,6 +10,8 @@ from app.models.published_post import PublishedPost
 from app.models.post_analytics import PostAnalytics
 from app.models.channel_snapshot import ChannelSnapshot
 from app.models.post_template import PostTemplate
+from app.models.rejected_url import RejectedArticleURL
+from app.models.prompt_config import PromptConfig
 
 __all__ = [
     "User",
@@ -23,4 +25,6 @@ __all__ = [
     "PostAnalytics",
     "ChannelSnapshot",
     "PostTemplate",
+    "RejectedArticleURL",
+    "PromptConfig",
 ]

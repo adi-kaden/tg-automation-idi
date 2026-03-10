@@ -20,6 +20,7 @@ from app.services.content.content_generator import ContentGenerator
 from app.services.content.image_generator import ImageGenerator
 from app.services.content.auto_selector import AutoSelector
 from app.services.content.slot_manager import SlotManager, DUBAI_TZ
+from app.models.prompt_config import PromptConfig
 from app.services.telegram_publisher import TelegramPublisher, PostContent
 from app.services.notification_service import send_notification, NotificationType
 from app.models.published_post import PublishedPost
@@ -138,6 +139,7 @@ def generate_content_for_slot(self, slot_id: str):
             slot_data = {
                 "id": str(slot.id),
                 "content_type": slot.content_type,
+                "slot_number": slot.slot_number,
             }
 
             # Get relevant articles
@@ -168,7 +170,41 @@ def generate_content_for_slot(self, slot_id: str):
                 for a in articles
             ]
 
-        # Step 2: Generate content (outside DB session)
+        # Step 2: Load prompt config from DB
+        prompt_config_dict = None
+        async with AsyncSessionLocal() as db:
+            # Try slot-specific override first, then global
+            slot_num = slot_data["slot_number"]
+            result = await db.execute(
+                select(PromptConfig).where(
+                    PromptConfig.scope == "slot_override",
+                    PromptConfig.slot_number == slot_num,
+                    PromptConfig.is_active == True,
+                )
+            )
+            pc = result.scalar_one_or_none()
+
+            if not pc:
+                result = await db.execute(
+                    select(PromptConfig).where(
+                        PromptConfig.scope == "global",
+                        PromptConfig.is_active == True,
+                    )
+                )
+                pc = result.scalar_one_or_none()
+
+            if pc:
+                prompt_config_dict = {
+                    "system_prompt": pc.system_prompt,
+                    "generation_prompt": pc.generation_prompt,
+                    "tone": pc.tone,
+                    "max_length_chars": pc.max_length_chars,
+                    "image_style_prompt": pc.image_style_prompt,
+                    "image_aspect_ratio": pc.image_aspect_ratio,
+                }
+                logger.info(f"Loaded prompt config: scope={pc.scope}, slot={pc.slot_number}")
+
+        # Generate content (outside DB session)
         generator = ContentGenerator()
         image_gen = ImageGenerator(output_dir="generated_images")
 
@@ -187,6 +223,7 @@ def generate_content_for_slot(self, slot_id: str):
                     articles=article_subset,
                     content_type=slot_data["content_type"],
                     category=category,
+                    prompt_config=prompt_config_dict,
                 )
 
                 # Generate image
@@ -196,6 +233,7 @@ def generate_content_for_slot(self, slot_id: str):
                     category=category,
                     slot_id=slot_id,
                     option_label=label,
+                    prompt_config=prompt_config_dict,
                 )
 
                 logger.info(f"Image generated, base64 length: {len(image_base64) if image_base64 else 0}")

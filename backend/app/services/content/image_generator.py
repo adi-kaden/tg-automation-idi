@@ -35,8 +35,12 @@ class ImageGenerator:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def _enhance_prompt(self, base_prompt: str, category: str) -> str:
+    def _enhance_prompt(self, base_prompt: str, category: str, prompt_config: dict | None = None) -> str:
         """Enhance the image prompt with style guidance."""
+
+        # If prompt_config has a custom image_style_prompt, use it
+        if prompt_config and prompt_config.get("image_style_prompt"):
+            return f"{base_prompt}\n\n{prompt_config['image_style_prompt']}"
 
         style_guidance = {
             "real_estate_news": "Modern luxury Dubai architecture, professional real estate photography style, golden hour lighting, high-end finishes",
@@ -68,6 +72,7 @@ Note: No text or watermarks in the image"""
         category: str,
         slot_id: str,
         option_label: str,
+        prompt_config: dict | None = None,
     ) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """
         Generate an image for a post option using Imagen 4.0.
@@ -77,11 +82,13 @@ Note: No text or watermarks in the image"""
             category: Content category for style guidance
             slot_id: Content slot ID for file naming
             option_label: Option label (A/B) for file naming
+            prompt_config: Optional config with image_style_prompt, image_aspect_ratio
 
         Returns:
             Tuple of (image_url, local_path, image_base64)
         """
-        enhanced_prompt = self._enhance_prompt(prompt, category)
+        enhanced_prompt = self._enhance_prompt(prompt, category, prompt_config)
+        aspect_ratio = (prompt_config or {}).get("image_aspect_ratio", "16:9")
 
         logger.info(f"Generating image for slot {slot_id} option {option_label}")
 
@@ -92,7 +99,7 @@ Note: No text or watermarks in the image"""
                 prompt=enhanced_prompt,
                 config=types.GenerateImagesConfig(
                     number_of_images=1,
-                    aspect_ratio="16:9",
+                    aspect_ratio=aspect_ratio,
                     safety_filter_level="BLOCK_LOW_AND_ABOVE",
                 ),
             )

@@ -10,7 +10,7 @@ import {
   FileText,
   Rss,
   BarChart3,
-  FileCode2,
+  Sparkles,
   Settings,
   LogOut,
   Menu,
@@ -28,7 +28,7 @@ const navigation = [
   { name: 'Published Posts', href: '/posts', icon: FileText },
   { name: 'Scraper', href: '/scraper', icon: Rss },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
-  { name: 'Templates', href: '/templates', icon: FileCode2, adminOnly: true },
+  { name: 'Prompts', href: '/prompts', icon: Sparkles, adminOnly: true },
   { name: 'Settings', href: '/settings', icon: Settings, adminOnly: true },
 ];
 
