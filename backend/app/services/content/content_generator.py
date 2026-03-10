@@ -29,6 +29,8 @@ class GeneratedPost:
     body_en: str = ""
     # Hashtags no longer used but kept for compatibility
     hashtags: list[str] = None
+    # Claude-selected visual style (one of STYLE_PROMPTS keys)
+    image_style: str = ""
 
     def __post_init__(self):
         if self.hashtags is None:
@@ -129,15 +131,23 @@ Generate a Telegram post with the following structure (ALL IN RUSSIAN):
 
 1. TITLE (Russian): A catchy, engaging headline in Russian (max 100 chars)
 2. BODY (Russian): The main post content in Russian (400-800 chars). Include key facts, insights, and a subtle call-to-action if relevant. Do NOT include hashtags.
-3. IMAGE_PROMPT: A detailed prompt for generating an accompanying image (describe the visual concept, style, colors - suitable for a real estate/Dubai context)
+3. IMAGE_PROMPT: A detailed prompt for generating an accompanying image (describe the visual concept, composition, subject matter - suitable for a real estate/Dubai context). Do NOT include style/lighting/color instructions — a separate style layer will be applied.
 4. QUALITY_SCORE: Rate the newsworthiness and engagement potential (0.0-1.0)
+5. IMAGE_STYLE: Choose the single most appropriate visual style for the image based on the post content:
+   - "conceptual_photography" — Cinematic, dramatic lighting, premium textures, luxury mood
+   - "architectural_visualization" — Futuristic architecture, dramatic perspective, hyper-realistic
+   - "editorial_still_life" — Soft natural light, carefully arranged objects, minimalist
+   - "abstract_artistic" — Extreme close-up, textures, patterns, fine art macro photography
+   - "aerial_cinematic" — Drone/overhead perspective, sweeping urban views, golden hour
+   - "surreal_dreamlike" — Magical/impossible elements, ethereal soft lighting, fantasy blend
 
 Respond in JSON format:
 {{
     "title_ru": "...",
     "body_ru": "...",
     "image_prompt": "...",
-    "quality_score": 0.85
+    "quality_score": 0.85,
+    "image_style": "conceptual_photography"
 }}"""
 
 
@@ -217,6 +227,7 @@ class ContentGenerator:
                 image_prompt=data.get("image_prompt", ""),
                 category=category,
                 quality_score=float(data.get("quality_score", 0.5)),
+                image_style=data.get("image_style", ""),
             )
 
         except json.JSONDecodeError as e:
@@ -289,6 +300,7 @@ Return the COMPLETE post in the same JSON format, with only the requested sectio
                 image_prompt=data.get("image_prompt", original_post.image_prompt),
                 category=original_post.category,
                 quality_score=float(data.get("quality_score", original_post.quality_score)),
+                image_style=data.get("image_style", original_post.image_style),
             )
 
         except (json.JSONDecodeError, anthropic.APIError) as e:

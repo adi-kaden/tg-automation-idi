@@ -101,6 +101,7 @@ export interface PostOption {
   image_prompt: string | null;
   image_url: string | null;
   image_data: string | null;  // Base64 encoded image
+  image_style?: string;
   category: ContentCategory;
   ai_quality_score: number;
   content_type: string;
@@ -197,7 +198,6 @@ export interface PromptConfigUpdate {
   generation_prompt?: string;
   tone?: string;
   max_length_chars?: number;
-  image_style_prompt?: string;
   image_aspect_ratio?: string;
 }
 
@@ -212,7 +212,6 @@ export interface TestGenerateRequest {
   generation_prompt: string;
   tone: string;
   max_length_chars: number;
-  image_style_prompt: string;
   image_aspect_ratio: string;
   slot_number?: number;
 }
@@ -224,6 +223,7 @@ export interface TestGenerateResponse {
   quality_score: number;
   image_base64: string | null;
   articles_used: number;
+  image_style: string;
 }
 
 // Setting types

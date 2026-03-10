@@ -55,7 +55,6 @@ function PromptForm({
   const [generationPrompt, setGenerationPrompt] = useState('');
   const [tone, setTone] = useState('professional');
   const [maxLength, setMaxLength] = useState(1500);
-  const [imageStylePrompt, setImageStylePrompt] = useState('');
   const [imageAspectRatio, setImageAspectRatio] = useState('16:9');
 
   useEffect(() => {
@@ -64,7 +63,6 @@ function PromptForm({
       setGenerationPrompt(config.generation_prompt);
       setTone(config.tone);
       setMaxLength(config.max_length_chars);
-      setImageStylePrompt(config.image_style_prompt);
       setImageAspectRatio(config.image_aspect_ratio);
     }
   }, [config]);
@@ -74,7 +72,6 @@ function PromptForm({
     generation_prompt: generationPrompt,
     tone,
     max_length_chars: maxLength,
-    image_style_prompt: imageStylePrompt,
     image_aspect_ratio: imageAspectRatio,
   });
 
@@ -158,17 +155,9 @@ function PromptForm({
           Image Generation (Imagen)
         </h3>
 
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">
-            Image Style Prompt
-          </label>
-          <textarea
-            value={imageStylePrompt}
-            onChange={(e) => setImageStylePrompt(e.target.value)}
-            rows={4}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-        </div>
+        <p className="text-xs text-slate-500">
+          Image style is automatically selected by Claude based on post content. Six visual styles are available: conceptual photography, architectural visualization, editorial still life, abstract artistic, aerial cinematic, and surreal dreamlike.
+        </p>
 
         <div className="max-w-xs">
           <label className="block text-sm font-medium text-slate-700 mb-1">Aspect Ratio</label>
@@ -213,13 +202,18 @@ function PromptForm({
       {/* Test Result Preview */}
       {testResult && (
         <div className="border rounded-lg p-4 bg-slate-50 space-y-3">
-          <h4 className="text-sm font-semibold flex items-center gap-2">
+          <h4 className="text-sm font-semibold flex items-center gap-2 flex-wrap">
             <Check className="h-4 w-4 text-green-500" />
             Test Generation Preview
             <Badge variant="outline">{testResult.articles_used} articles used</Badge>
             <Badge variant="secondary">
               Score: {(testResult.quality_score * 100).toFixed(0)}%
             </Badge>
+            {testResult.image_style && (
+              <Badge variant="outline" className="text-violet-600 border-violet-300">
+                {testResult.image_style.replace(/_/g, ' ')}
+              </Badge>
+            )}
           </h4>
           <div>
             <p className="text-xs text-slate-500 mb-1">Title</p>
@@ -275,7 +269,6 @@ export default function PromptsPage() {
         generation_prompt: data.generation_prompt!,
         tone: data.tone!,
         max_length_chars: data.max_length_chars!,
-        image_style_prompt: data.image_style_prompt!,
         image_aspect_ratio: data.image_aspect_ratio!,
       },
       { onSuccess: (result) => setTestResult(result) }
@@ -294,7 +287,6 @@ export default function PromptsPage() {
         generation_prompt: data.generation_prompt!,
         tone: data.tone!,
         max_length_chars: data.max_length_chars!,
-        image_style_prompt: data.image_style_prompt!,
         image_aspect_ratio: data.image_aspect_ratio!,
         slot_number: slotNumber,
       },

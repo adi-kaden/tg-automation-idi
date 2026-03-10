@@ -234,6 +234,7 @@ def generate_content_for_slot(self, slot_id: str):
                     slot_id=slot_id,
                     option_label=label,
                     prompt_config=prompt_config_dict,
+                    image_style=post.image_style,
                 )
 
                 logger.info(f"Image generated, base64 length: {len(image_base64) if image_base64 else 0}")
@@ -294,6 +295,7 @@ def generate_content_for_slot(self, slot_id: str):
                     content_type=slot_data["content_type"],
                     source_article_ids=json.dumps(opt_data["source_ids"]),
                     ai_quality_score=opt_data["post"].quality_score,
+                    image_style=opt_data["post"].image_style,
                 )
 
                 db.add(option)

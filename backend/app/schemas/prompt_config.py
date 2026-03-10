@@ -62,3 +62,4 @@ class TestGenerateResponse(BaseModel):
     quality_score: float
     image_base64: Optional[str] = None
     articles_used: int
+    image_style: str = ""

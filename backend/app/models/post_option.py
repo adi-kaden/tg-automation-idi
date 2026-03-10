@@ -33,6 +33,7 @@ class PostOption(Base):
     image_url: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     image_local_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     image_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
+    image_style: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # Claude-selected visual style
 
     # Metadata
     category: Mapped[str] = mapped_column(String(30), nullable=False)
