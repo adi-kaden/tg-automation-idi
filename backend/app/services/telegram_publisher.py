@@ -95,6 +95,11 @@ class TelegramPublisher:
         if hashtag_text:
             message_parts.extend(["", hashtag_text])
 
+        # Add channel link for attribution when forwarded
+        channel_username = (settings.telegram_channel_id or "").lstrip("@")
+        if channel_username:
+            message_parts.extend(["", f'<a href="https://t.me/{channel_username}">@{channel_username}</a>'])
+
         return "\n".join(message_parts)
 
     @staticmethod
