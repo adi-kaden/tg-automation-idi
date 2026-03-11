@@ -210,16 +210,39 @@ class TelegramPublisher:
             photo = image_url
             logger.info(f"Using image URL: {image_url}")
 
+        CAPTION_LIMIT = 1024
+
         if photo:
             try:
-                message_id = await self._send_with_retry(
-                    self.bot.send_photo,
-                    chat_id=self.channel_id,
-                    photo=photo,
-                    caption=text,
-                    parse_mode=ParseMode.HTML,
-                )
-                return message_id
+                if len(text) <= CAPTION_LIMIT:
+                    # Text fits in caption - send as single photo message
+                    message_id = await self._send_with_retry(
+                        self.bot.send_photo,
+                        chat_id=self.channel_id,
+                        photo=photo,
+                        caption=text,
+                        parse_mode=ParseMode.HTML,
+                    )
+                    return message_id
+                else:
+                    # Caption too long - send photo first, then text as reply
+                    logger.info(f"Caption too long ({len(text)} chars), splitting into photo + text")
+                    photo_message_id = await self._send_with_retry(
+                        self.bot.send_photo,
+                        chat_id=self.channel_id,
+                        photo=photo,
+                    )
+                    if photo_message_id:
+                        # Send the full text as a reply to the photo
+                        text_message_id = await self._send_with_retry(
+                            self.bot.send_message,
+                            chat_id=self.channel_id,
+                            text=text,
+                            parse_mode=ParseMode.HTML,
+                            reply_to_message_id=photo_message_id,
+                        )
+                        return text_message_id or photo_message_id
+                    return photo_message_id
             finally:
                 # Close file handles if we opened any
                 if hasattr(photo, 'close'):
