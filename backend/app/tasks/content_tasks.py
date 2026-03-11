@@ -12,6 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from datetime import timedelta
+
 from app.config import get_settings
 from app.models.content_slot import ContentSlot
 from app.models.post_option import PostOption
@@ -44,6 +46,25 @@ def run_async(coro):
         return loop.run_until_complete(coro)
     finally:
         loop.close()
+
+
+async def _fetch_recent_published_posts(session) -> list[dict]:
+    """Fetch posts published in the last 3 days for topic deduplication."""
+    cutoff = datetime.now(DUBAI_TZ) - timedelta(days=3)
+    result = await session.execute(
+        select(PublishedPost)
+        .where(PublishedPost.published_at >= cutoff)
+        .order_by(PublishedPost.published_at.desc())
+    )
+    posts = result.scalars().all()
+    return [
+        {
+            "title": p.posted_title,
+            "body_snippet": (p.posted_body or "")[:150],
+            "published_at": str(p.published_at),
+        }
+        for p in posts
+    ]
 
 
 @celery_app.task(bind=True, max_retries=2)
@@ -204,6 +225,12 @@ def generate_content_for_slot(self, slot_id: str):
                 }
                 logger.info(f"Loaded prompt config: scope={pc.scope}, slot={pc.slot_number}")
 
+        # Fetch recent published posts for topic deduplication
+        recent_posts = []
+        async with AsyncSessionLocal() as db:
+            recent_posts = await _fetch_recent_published_posts(db)
+        logger.info(f"Fetched {len(recent_posts)} recent posts for dedup")
+
         # Generate content (outside DB session)
         generator = ContentGenerator()
         image_gen = ImageGenerator(output_dir="generated_images")
@@ -224,6 +251,7 @@ def generate_content_for_slot(self, slot_id: str):
                     content_type=slot_data["content_type"],
                     category=category,
                     prompt_config=prompt_config_dict,
+                    recent_posts=recent_posts,
                 )
 
                 # Generate image
@@ -416,12 +444,18 @@ def auto_select_for_slot(self, slot_id: str):
                 for opt in slot.options
             ]
 
+        # Fetch recent published posts for dedup context
+        recent_posts = []
+        async with AsyncSessionLocal() as db:
+            recent_posts = await _fetch_recent_published_posts(db)
+
         # Step 2: Run AI selection (outside DB session)
         selector = AutoSelector()
         selected_label, reasoning, confidence = await selector.select_best_option(
             options=option_dicts,
             content_type=slot_content_type,
             slot_time=slot_scheduled_time,
+            recent_posts=recent_posts,
         )
 
         # Find the selected option ID

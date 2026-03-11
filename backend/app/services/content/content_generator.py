@@ -49,12 +49,29 @@ Your posts should:
 IMPORTANT: All content must be written in Russian. The target audience is Russian-speaking investors and business people interested in Dubai real estate."""
 
 
+def _build_recent_posts_section(recent_posts: list[dict]) -> str:
+    """Build a prompt section listing recently published posts to avoid topic repetition."""
+    if not recent_posts:
+        return ""
+    lines = []
+    for i, p in enumerate(recent_posts, 1):
+        lines.append(f"{i}. {p['title']} — {p['body_snippet']}...")
+    posts_text = "\n".join(lines)
+    return f"""
+
+RECENTLY PUBLISHED (DO NOT repeat these topics or cover the same news):
+{posts_text}
+
+IMPORTANT: Create content about a DIFFERENT topic from the ones listed above. Do not rewrite, rephrase, or cover the same events/news even from a different angle."""
+
+
 def _build_generation_prompt(
     articles: list[dict],
     content_type: str,
     category: str,
     template: Optional[dict] = None,
     prompt_config: Optional[dict] = None,
+    recent_posts: Optional[list[dict]] = None,
 ) -> str:
     """Build the prompt for content generation.
 
@@ -90,6 +107,8 @@ def _build_generation_prompt(
     guidance = content_type_guidance.get(content_type, content_type_guidance["general_dubai"])
     topic_focus = category_topics.get(category, category_topics["general"])
 
+    recent_posts_section = _build_recent_posts_section(recent_posts or [])
+
     # If we have a prompt_config with generation_prompt template, use it
     if prompt_config and prompt_config.get("generation_prompt"):
         tone = prompt_config.get("tone", "professional")
@@ -97,7 +116,7 @@ def _build_generation_prompt(
         generation_template = prompt_config["generation_prompt"]
 
         # Replace template variables
-        return (
+        result = (
             generation_template
             .replace("{{articles}}", articles_text)
             .replace("{{content_type}}", content_type)
@@ -105,7 +124,12 @@ def _build_generation_prompt(
             .replace("{{tone}}", tone)
             .replace("{{max_length}}", str(max_length))
             .replace("{{guidance}}", guidance)
+            .replace("{{recent_posts}}", recent_posts_section)
         )
+        # If template didn't have {{recent_posts}} placeholder, append the section
+        if recent_posts_section and "RECENTLY PUBLISHED" not in result:
+            result += recent_posts_section
+        return result
 
     # Legacy: support old template dict
     template_section = ""
@@ -126,7 +150,7 @@ Category: {category} ({topic_focus})
 
 SOURCE ARTICLES:
 {articles_text}
-
+{recent_posts_section}
 Generate a Telegram post with the following structure (ALL IN RUSSIAN):
 
 1. TITLE (Russian): A catchy, engaging headline in Russian (max 100 chars)
@@ -170,6 +194,7 @@ class ContentGenerator:
         category: str,
         template: Optional[dict] = None,
         prompt_config: Optional[dict] = None,
+        recent_posts: Optional[list[dict]] = None,
     ) -> GeneratedPost:
         """
         Generate a bilingual Telegram post from source articles.
@@ -187,7 +212,7 @@ class ContentGenerator:
         if not articles:
             raise ValueError("At least one article required for generation")
 
-        prompt = _build_generation_prompt(articles, content_type, category, template, prompt_config)
+        prompt = _build_generation_prompt(articles, content_type, category, template, prompt_config, recent_posts)
 
         # Use system prompt from config if available, otherwise default
         system_prompt = SYSTEM_PROMPT

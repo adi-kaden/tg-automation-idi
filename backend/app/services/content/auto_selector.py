@@ -45,6 +45,7 @@ class AutoSelector:
         options: list[dict],
         content_type: str,
         slot_time: str,
+        recent_posts: Optional[list[dict]] = None,
     ) -> tuple[str, str, float]:
         """
         Select the best post option from available choices.
@@ -81,13 +82,25 @@ AI Quality Score: {opt.get('ai_quality_score', 'N/A')}
 
 """
 
+        # Build recent posts context for dedup
+        recent_posts_section = ""
+        if recent_posts:
+            recent_lines = []
+            for i, p in enumerate(recent_posts, 1):
+                recent_lines.append(f"{i}. {p['title']}")
+            recent_posts_section = f"""
+RECENTLY PUBLISHED POSTS (last 3 days):
+{chr(10).join(recent_lines)}
+
+IMPORTANT: Strongly prefer the option that covers a DIFFERENT topic from the recently published posts listed above. Avoid selecting posts that repeat the same news or themes."""
+
         prompt = f"""Compare these Russian Telegram post options and select the best one for publication.
 
 Content Type: {content_type}
 Scheduled Time: {slot_time}
 
 {options_text}
-
+{recent_posts_section}
 Analyze each option and select the best one for our Russian-speaking audience of property investors and Dubai enthusiasts.
 
 Respond in JSON format:
