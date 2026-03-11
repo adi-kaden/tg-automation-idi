@@ -4,15 +4,13 @@ Celery tasks for content generation and auto-selection.
 import asyncio
 import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import selectinload
-
-from datetime import timedelta
 
 from app.config import get_settings
 from app.models.content_slot import ContentSlot
@@ -50,21 +48,26 @@ def run_async(coro):
 
 async def _fetch_recent_published_posts(session) -> list[dict]:
     """Fetch posts published in the last 3 days for topic deduplication."""
-    cutoff = datetime.now(DUBAI_TZ) - timedelta(days=3)
-    result = await session.execute(
-        select(PublishedPost)
-        .where(PublishedPost.published_at >= cutoff)
-        .order_by(PublishedPost.published_at.desc())
-    )
-    posts = result.scalars().all()
-    return [
-        {
-            "title": p.posted_title,
-            "body_snippet": (p.posted_body or "")[:150],
-            "published_at": str(p.published_at),
-        }
-        for p in posts
-    ]
+    try:
+        from sqlalchemy import func
+        cutoff = func.now() - timedelta(days=3)
+        result = await session.execute(
+            select(PublishedPost)
+            .where(PublishedPost.published_at >= cutoff)
+            .order_by(PublishedPost.published_at.desc())
+        )
+        posts = result.scalars().all()
+        return [
+            {
+                "title": p.posted_title,
+                "body_snippet": (p.posted_body or "")[:150],
+                "published_at": str(p.published_at),
+            }
+            for p in posts
+        ]
+    except Exception as e:
+        logger.error(f"Failed to fetch recent posts for dedup: {e}")
+        return []
 
 
 @celery_app.task(bind=True, max_retries=2)
