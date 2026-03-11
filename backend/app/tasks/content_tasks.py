@@ -363,20 +363,7 @@ def generate_content_for_slot(self, slot_id: str):
         logger.error(f"Content generation failed for slot {slot_id}: {e}")
         import traceback
         traceback.print_exc()
-        try:
-            self.retry(countdown=120, exc=e)
-        except self.MaxRetriesExceededError:
-            logger.error(f"Content generation permanently failed for slot {slot_id}: {e}")
-            try:
-                run_async(send_notification(
-                    NotificationType.GENERATION_FAILED,
-                    slot_id=slot_id,
-                    scheduled_time="Unknown",
-                    content_type="Unknown",
-                    error_message=str(e)[:200],
-                ))
-            except Exception:
-                logger.error("Failed to send generation failure notification")
+        self.retry(countdown=120, exc=e)
 
 
 @celery_app.task(bind=True, max_retries=1)
@@ -567,21 +554,7 @@ def publish_scheduled_slot(self, slot_id: str = None, slot_number: int = None):
         logger.error(f"Publishing task failed: {e}")
         import traceback
         traceback.print_exc()
-        try:
-            self.retry(countdown=60, exc=e)
-        except self.MaxRetriesExceededError:
-            # All retries exhausted — notify SMM about the failure
-            logger.error(f"Publishing permanently failed after {self.max_retries} retries: {e}")
-            try:
-                run_async(send_notification(
-                    NotificationType.PUBLISH_FAILED,
-                    slot_id=slot_id or f"slot_{slot_number}",
-                    scheduled_time=f"Slot {slot_number}" if slot_number else "Unknown",
-                    error_message=str(e)[:200],
-                    retry_count=self.max_retries,
-                ))
-            except Exception:
-                logger.error("Failed to send publish failure notification")
+        self.retry(countdown=60, exc=e)
     finally:
         try:
             lock.release()

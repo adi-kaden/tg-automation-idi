@@ -1,12 +1,16 @@
 """
 Celery application configuration.
 """
+import logging
+
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import task_failure
 
 from app.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 # Create Celery app
 celery_app = Celery(
@@ -131,3 +135,78 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(hour=19, minute=0),
     },
 }
+
+
+# ==================== Global Task Failure Notifications ====================
+
+_TASK_DISPLAY_NAMES = {
+    "app.tasks.content_tasks.create_daily_slots_task": "Create Daily Slots",
+    "app.tasks.content_tasks.generate_content_for_slot": "Generate Content",
+    "app.tasks.content_tasks.generate_all_pending_content": "Generate All Content",
+    "app.tasks.content_tasks.auto_select_for_slot": "Auto-Select Option",
+    "app.tasks.content_tasks.check_and_auto_select": "Check Auto-Select",
+    "app.tasks.content_tasks.publish_scheduled_slot": "Publish to Telegram",
+    "app.tasks.scraper_tasks.scrape_all_sources": "Scrape All Sources",
+    "app.tasks.scraper_tasks.scrape_single_source": "Scrape Single Source",
+    "app.tasks.scraper_tasks.cleanup_old_articles": "Cleanup Articles",
+    "app.tasks.analytics_tasks.collect_post_analytics": "Collect Analytics",
+    "app.tasks.analytics_tasks.create_daily_channel_snapshot": "Channel Snapshot",
+}
+
+
+def _escape_html(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+@task_failure.connect
+def notify_task_failure(sender=None, task_id=None, exception=None,
+                        args=None, kwargs=None, traceback=None,
+                        einfo=None, **kw):
+    """
+    Send Telegram notification when ANY Celery task permanently fails.
+
+    This fires after all retries are exhausted, so it only notifies on
+    genuine permanent failures — not transient retry-able errors.
+    """
+    try:
+        bot_token = settings.telegram_bot_token
+        chat_id = settings.telegram_smm_chat_id
+        if not bot_token or not chat_id:
+            return
+
+        task_name = getattr(sender, "name", None) or "Unknown"
+        display_name = _TASK_DISPLAY_NAMES.get(task_name, task_name.rsplit(".", 1)[-1])
+
+        error_str = _escape_html(str(exception)[:300]) if exception else "Unknown error"
+
+        # Build context from args/kwargs
+        ctx_parts = []
+        if kwargs:
+            for k, v in kwargs.items():
+                ctx_parts.append(f"{k}={v}")
+        if args:
+            ctx_parts.extend(str(a)[:80] for a in args)
+        context = _escape_html(", ".join(ctx_parts)) if ctx_parts else "—"
+
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        now_str = datetime.now(ZoneInfo("Asia/Dubai")).strftime("%H:%M %d/%m/%Y")
+
+        message = (
+            f"🚨 <b>Task Failed</b>\n\n"
+            f"📋 <b>Task:</b> {display_name}\n"
+            f"❌ <b>Error:</b> {error_str}\n"
+            f"📝 <b>Context:</b> {context}\n"
+            f"🕐 <b>Time:</b> {now_str} Dubai"
+        )
+
+        import httpx
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        httpx.post(url, json={
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "HTML",
+        }, timeout=10)
+
+    except Exception as exc:
+        logger.error(f"Failed to send task failure notification: {exc}")
