@@ -8,6 +8,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, and_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -46,6 +47,7 @@ class SlotManager:
     async def create_daily_slots(self, target_date: date) -> list[ContentSlot]:
         """
         Create all 5 content slots for a given date.
+        Uses savepoints to handle race conditions with concurrent workers.
 
         Args:
             target_date: The date to create slots for
@@ -95,8 +97,17 @@ class SlotManager:
                 approval_deadline=approval_deadline,
             )
 
-            self.db.add(slot)
-            created_slots.append(slot)
+            try:
+                async with self.db.begin_nested():
+                    self.db.add(slot)
+                    await self.db.flush()
+                created_slots.append(slot)
+            except IntegrityError:
+                # Race condition: another worker created this slot concurrently
+                logger.info(f"Slot {schedule['slot_number']} for {target_date} created by another worker")
+                existing = await self._get_slot(target_date, schedule["slot_number"])
+                if existing:
+                    created_slots.append(existing)
 
         await self.db.commit()
 
@@ -114,9 +125,9 @@ class SlotManager:
                     ContentSlot.scheduled_date == target_date,
                     ContentSlot.slot_number == slot_number
                 )
-            )
+            ).limit(1)
         )
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     async def get_slot_with_options(self, slot_id: UUID) -> Optional[ContentSlot]:
         """Get a slot with its post options loaded."""

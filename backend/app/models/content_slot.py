@@ -1,4 +1,4 @@
-from sqlalchemy import String, Integer, Date, DateTime, ForeignKey, func
+from sqlalchemy import String, Integer, Date, DateTime, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, date
 from uuid import UUID, uuid4
@@ -18,6 +18,9 @@ class ContentSlot(Base):
     5 slots are created per day (8am, 12pm, 4pm, 8pm, 12am Dubai time).
     """
     __tablename__ = "content_slots"
+    __table_args__ = (
+        UniqueConstraint('scheduled_date', 'slot_number', name='uq_content_slots_date_slot'),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     scheduled_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
