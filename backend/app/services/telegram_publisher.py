@@ -62,12 +62,15 @@ class TelegramPublisher:
         self.bot = Bot(token=settings.telegram_bot_token)
         self.channel_id = settings.telegram_channel_id
 
+    CAPTION_LIMIT = 1024
+
     def _format_post_html(
         self,
         title: str,
         body: str,
         hashtags: list[str],
         language: str,
+        max_length: int = 0,
     ) -> str:
         """
         Format post content for Telegram using HTML.
@@ -77,6 +80,7 @@ class TelegramPublisher:
             body: Post body text
             hashtags: List of hashtags
             language: "en" or "ru"
+            max_length: If > 0, truncate body to fit within this limit
 
         Returns:
             HTML-formatted message string
@@ -84,21 +88,46 @@ class TelegramPublisher:
         # Format hashtags
         hashtag_text = " ".join(hashtags) if hashtags else ""
 
-        # Build the message with HTML formatting
-        # Using <b> for bold title
-        message_parts = [
-            f"<b>{self._escape_html(title)}</b>",
-            "",
-            self._escape_html(body),
-        ]
+        # Calculate overhead (everything except body)
+        escaped_title = self._escape_html(title)
+        title_line = f"<b>{escaped_title}</b>"
+        channel_username = (settings.telegram_channel_id or "").lstrip("@")
+        channel_line = f'Подписывайтесь на наш канал: <a href="https://t.me/{channel_username}">@{channel_username}</a>' if channel_username else ""
 
+        # Build non-body parts to measure overhead
+        overhead_parts = [title_line, ""]
+        if hashtag_text:
+            overhead_parts.extend(["", hashtag_text])
+        if channel_line:
+            overhead_parts.extend(["", channel_line])
+        # +1 for the newline between title block and body
+        overhead = len("\n".join(overhead_parts)) + 1  # +1 for body's leading \n
+
+        escaped_body = self._escape_html(body)
+
+        # Truncate body if needed to fit within max_length
+        if max_length > 0 and (overhead + len(escaped_body)) > max_length:
+            available = max_length - overhead - 3  # 3 for "..."
+            if available > 100:
+                # Cut at last paragraph break or sentence within limit
+                truncated = escaped_body[:available]
+                # Try to cut at last paragraph break
+                last_para = truncated.rfind("\n\n")
+                if last_para > available // 2:
+                    truncated = truncated[:last_para]
+                else:
+                    # Try to cut at last sentence
+                    last_period = truncated.rfind(". ")
+                    if last_period > available // 2:
+                        truncated = truncated[:last_period + 1]
+                escaped_body = truncated + "..."
+
+        # Build the message
+        message_parts = [title_line, "", escaped_body]
         if hashtag_text:
             message_parts.extend(["", hashtag_text])
-
-        # Add channel link for attribution when forwarded
-        channel_username = (settings.telegram_channel_id or "").lstrip("@")
-        if channel_username:
-            message_parts.extend(["", f'Подписывайтесь на наш канал: <a href="https://t.me/{channel_username}">@{channel_username}</a>'])
+        if channel_line:
+            message_parts.extend(["", channel_line])
 
         return "\n".join(message_parts)
 
@@ -210,39 +239,16 @@ class TelegramPublisher:
             photo = image_url
             logger.info(f"Using image URL: {image_url}")
 
-        CAPTION_LIMIT = 1024
-
         if photo:
             try:
-                if len(text) <= CAPTION_LIMIT:
-                    # Text fits in caption - send as single photo message
-                    message_id = await self._send_with_retry(
-                        self.bot.send_photo,
-                        chat_id=self.channel_id,
-                        photo=photo,
-                        caption=text,
-                        parse_mode=ParseMode.HTML,
-                    )
-                    return message_id
-                else:
-                    # Caption too long - send photo first, then text as reply
-                    logger.info(f"Caption too long ({len(text)} chars), splitting into photo + text")
-                    photo_message_id = await self._send_with_retry(
-                        self.bot.send_photo,
-                        chat_id=self.channel_id,
-                        photo=photo,
-                    )
-                    if photo_message_id:
-                        # Send the full text as a reply to the photo
-                        text_message_id = await self._send_with_retry(
-                            self.bot.send_message,
-                            chat_id=self.channel_id,
-                            text=text,
-                            parse_mode=ParseMode.HTML,
-                            reply_to_message_id=photo_message_id,
-                        )
-                        return text_message_id or photo_message_id
-                    return photo_message_id
+                message_id = await self._send_with_retry(
+                    self.bot.send_photo,
+                    chat_id=self.channel_id,
+                    photo=photo,
+                    caption=text,
+                    parse_mode=ParseMode.HTML,
+                )
+                return message_id
             finally:
                 # Close file handles if we opened any
                 if hasattr(photo, 'close'):
@@ -275,12 +281,17 @@ class TelegramPublisher:
         logger.info(f"Publishing Russian post to channel {self.channel_id}")
 
         try:
-            # Format Russian version
+            # Check if post has an image to determine caption limit
+            has_image = content.image_data or content.image_url or content.image_local_path
+            max_length = self.CAPTION_LIMIT if has_image else 0
+
+            # Format Russian version (truncate body if needed for photo caption)
             text_ru = self._format_post_html(
                 title=content.title_ru,
                 body=content.body_ru,
                 hashtags=content.hashtags,
                 language="ru",
+                max_length=max_length,
             )
 
             # Send Russian version with image
