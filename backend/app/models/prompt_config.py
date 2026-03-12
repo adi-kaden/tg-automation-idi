@@ -35,7 +35,7 @@ class PromptConfig(Base):
     generation_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     tone: Mapped[str] = mapped_column(String(30), default="professional")
     # Values: professional, exciting, analytical, informative, urgent
-    max_length_chars: Mapped[int] = mapped_column(Integer, default=1500)
+    max_length_chars: Mapped[int] = mapped_column(Integer, default=700)
 
     # Image generation (Imagen)
     image_style_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")

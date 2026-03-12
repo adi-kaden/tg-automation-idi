@@ -59,7 +59,10 @@ SOURCE ARTICLES:
 Generate a Telegram post with the following structure (ALL IN RUSSIAN):
 
 1. TITLE (Russian): A catchy, engaging headline in Russian (max 100 chars)
-2. BODY (Russian): The main post content in Russian (400-{{max_length}} chars). Include key facts, insights, and a subtle call-to-action if relevant. Do NOT include hashtags.
+2. BODY (Russian): The main post content in Russian (400-{{max_length}} characters maximum).
+   CRITICAL: The ENTIRE Telegram message (title + body + hashtags + subscription line)
+   must fit within 1024 characters. Keep the body concise.
+   Include key facts, insights, and a subtle call-to-action if relevant. Do NOT include hashtags.
 3. IMAGE_PROMPT: A detailed prompt for generating an accompanying image (describe the visual concept, composition, subject matter - suitable for a real estate/Dubai context). Do NOT include style/lighting/color instructions — a separate style layer will be applied.
 4. QUALITY_SCORE: Rate the newsworthiness and engagement potential (0.0-1.0)
 5. IMAGE_STYLE: Choose the single most appropriate visual style for the image based on the post content:
@@ -112,7 +115,7 @@ async def _get_or_create_global(db: AsyncSession) -> PromptConfig:
             system_prompt=DEFAULT_SYSTEM_PROMPT,
             generation_prompt=DEFAULT_GENERATION_PROMPT,
             tone="professional",
-            max_length_chars=1500,
+            max_length_chars=700,
             image_style_prompt=DEFAULT_IMAGE_STYLE_PROMPT,
             image_aspect_ratio="16:9",
             is_active=True,

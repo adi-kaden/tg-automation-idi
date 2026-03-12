@@ -122,8 +122,9 @@ def generate_content_for_slot(self, slot_id: str):
             if slot.status == "published":
                 return {"error": f"Slot {slot_id} is already published"}
 
-            # Allow regeneration for pending, generating, options_ready, approved, failed
-            if slot.status in ["options_ready", "approved", "failed"]:
+            # Clean up existing options for regeneration.
+            # Status may already be "generating" (set by the API endpoint).
+            if slot.status in ["options_ready", "approved", "failed", "generating"]:
                 # Clear existing options for regeneration
                 from sqlalchemy import delete as sql_delete
                 from sqlalchemy import update as sql_update
@@ -181,6 +182,15 @@ def generate_content_for_slot(self, slot_id: str):
                 slot.status = "failed"
                 await db.commit()
                 logger.error(f"No articles available for slot {slot_id} - content generation failed")
+
+                await send_notification(
+                    NotificationType.GENERATION_FAILED,
+                    slot_id=slot_id,
+                    scheduled_time=slot.scheduled_time,
+                    content_type=slot.content_type,
+                    error_message="No articles available for content generation",
+                )
+
                 return {"error": "No articles available for content generation"}
 
             # Convert articles to dicts
@@ -619,9 +629,10 @@ def _do_publish(slot_id: str = None, slot_number: int = None):
                 if slot:
                     slots_to_publish = [slot]
             elif slot_number:
-                # Scheduled publish: find slot by slot_number + today's date
+                # Scheduled publish: find slot by slot_number + time window
+                # Use scheduled_at window instead of scheduled_date to handle
+                # slot 5 (00:00 Dubai) which crosses the date boundary
                 now = datetime.now(DUBAI_TZ)
-                today = now.date()
 
                 result = await db.execute(
                     select(ContentSlot)
@@ -629,22 +640,41 @@ def _do_publish(slot_id: str = None, slot_number: int = None):
                     .where(
                         ContentSlot.status == "approved",
                         ContentSlot.slot_number == slot_number,
-                        ContentSlot.scheduled_date == today,
+                        ContentSlot.scheduled_at.between(
+                            now - timedelta(hours=1),
+                            now + timedelta(minutes=30),
+                        ),
                     )
-                    .order_by(ContentSlot.created_at)
+                    .order_by(ContentSlot.scheduled_at.desc())
                     .limit(1)
                 )
                 slot = result.scalars().first()
                 if slot:
                     slots_to_publish = [slot]
-                    logger.info(f"Found slot {slot.id} for slot_number={slot_number} on {today}")
+                    logger.info(f"Found slot {slot.id} for slot_number={slot_number} (scheduled_at={slot.scheduled_at})")
             else:
                 logger.warning("No slot_id or slot_number provided, nothing to publish")
                 return {"published": 0, "message": "No slot identifier provided"}
 
             if not slots_to_publish:
-                logger.info("No approved slots to publish at this time")
-                return {"published": 0, "message": "No slots to publish"}
+                msg = f"No approved slot found for slot {slot_number or slot_id} at publish time"
+                logger.warning(msg)
+
+                if slot_number:
+                    from app.services.content.slot_manager import SLOT_SCHEDULE
+                    slot_time = next(
+                        (s["time"] for s in SLOT_SCHEDULE if s["slot_number"] == slot_number),
+                        f"slot {slot_number}"
+                    )
+                    await send_notification(
+                        NotificationType.PUBLISH_FAILED,
+                        slot_id="N/A",
+                        scheduled_time=slot_time,
+                        error_message=msg,
+                        retry_count=0,
+                    )
+
+                return {"published": 0, "message": msg}
 
             # Initialize publisher
             try:
@@ -773,3 +803,39 @@ def _do_publish(slot_id: str = None, slot_number: int = None):
             }
 
     return _publish()
+
+
+@celery_app.task(bind=True)
+def publish_overdue_slots(self):
+    """Catch-up: publish any approved slots past their scheduled time."""
+
+    async def _publish_overdue():
+        AsyncSessionLocal = get_async_session()
+        async with AsyncSessionLocal() as db:
+            now = datetime.now(DUBAI_TZ)
+            cutoff = now - timedelta(hours=6)
+            result = await db.execute(
+                select(ContentSlot)
+                .where(
+                    ContentSlot.status == "approved",
+                    ContentSlot.scheduled_at < now,
+                    ContentSlot.scheduled_at > cutoff,
+                    ContentSlot.published_post_id.is_(None),
+                )
+                .order_by(ContentSlot.scheduled_at)
+            )
+            overdue_slots = result.scalars().all()
+
+            if not overdue_slots:
+                return {"overdue": 0}
+
+            for slot in overdue_slots:
+                logger.warning(
+                    f"Found overdue approved slot {slot.id} "
+                    f"(scheduled_at={slot.scheduled_at}). Publishing now."
+                )
+                publish_scheduled_slot.delay(slot_id=str(slot.id))
+
+            return {"overdue": len(overdue_slots)}
+
+    return run_async(_publish_overdue())

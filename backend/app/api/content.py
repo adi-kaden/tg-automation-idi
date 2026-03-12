@@ -150,14 +150,18 @@ async def trigger_content_generation(
         )
 
     # Allow regeneration for pending, failed, options_ready, and approved slots
-    # Reset slot status and clear existing options
+    # Reset slot status and clear existing selection
     if slot.status in ["options_ready", "approved"]:
-        # Clear selected option reference first
         slot.selected_option_id = None
         slot.selected_by = None
         slot.selected_by_user_id = None
-        await db.commit()
         logger.info(f"Cleared selection for slot {slot_id}")
+
+    # Set status to "generating" NOW so the frontend polling works correctly.
+    # Without this, the first poll sees the old status and stops immediately.
+    slot.status = "generating"
+    await db.commit()
+    logger.info(f"Set slot {slot_id} status to generating")
 
     # Trigger async task
     try:

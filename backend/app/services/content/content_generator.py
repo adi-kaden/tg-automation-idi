@@ -44,7 +44,7 @@ Your posts should:
 2. Appeal to Russian-speaking property investors and expatriates in Dubai
 3. Use a professional but approachable tone in Russian
 4. Include relevant emojis sparingly (1-3 per post)
-5. Be concise - ideal for Telegram reading
+5. Be concise — the ENTIRE post (title + body + hashtags + footer) must fit within 1024 characters for Telegram photo captions. Aim for body text of ~600 characters maximum.
 
 IMPORTANT: All content must be written in Russian. The target audience is Russian-speaking investors and business people interested in Dubai real estate."""
 
@@ -112,7 +112,7 @@ def _build_generation_prompt(
     # If we have a prompt_config with generation_prompt template, use it
     if prompt_config and prompt_config.get("generation_prompt"):
         tone = prompt_config.get("tone", "professional")
-        max_length = prompt_config.get("max_length_chars", 1500)
+        max_length = min(prompt_config.get("max_length_chars", 700), 700)
         generation_template = prompt_config["generation_prompt"]
 
         # Replace template variables
@@ -137,7 +137,7 @@ def _build_generation_prompt(
         template_section = f"""
 Use this template as a style guide:
 Tone: {template.get('tone', 'professional')}
-Max Length: {template.get('max_length_chars', 1500)} characters
+Max Length: {template.get('max_length_chars', 700)} characters
 Example style: {template.get('example_output', 'N/A')}
 """
 
@@ -154,7 +154,10 @@ SOURCE ARTICLES:
 Generate a Telegram post with the following structure (ALL IN RUSSIAN):
 
 1. TITLE (Russian): A catchy, engaging headline in Russian (max 100 chars)
-2. BODY (Russian): The main post content in Russian (400-800 chars). Include key facts, insights, and a subtle call-to-action if relevant. Do NOT include hashtags.
+2. BODY (Russian): The main post content in Russian (400-700 characters maximum).
+   CRITICAL: The ENTIRE Telegram message (title + body + hashtags + subscription line)
+   must fit within 1024 characters. Keep the body concise — aim for ~600 characters.
+   Include key facts, insights, and a subtle call-to-action if relevant. Do NOT include hashtags.
 3. IMAGE_PROMPT: A detailed prompt for generating an accompanying image (describe the visual concept, composition, subject matter - suitable for a real estate/Dubai context). Do NOT include style/lighting/color instructions — a separate style layer will be applied.
 4. QUALITY_SCORE: Rate the newsworthiness and engagement potential (0.0-1.0)
 5. IMAGE_STYLE: Choose the single most appropriate visual style for the image based on the post content:
