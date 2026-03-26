@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     telegram_bot_token: Optional[str] = None
     telegram_channel_id: Optional[str] = None
     telegram_smm_chat_id: Optional[str] = None
+    telegram_alert_chat_id: Optional[str] = None
     telegram_api_id: Optional[str] = None
     telegram_api_hash: Optional[str] = None
     telegram_session_string: Optional[str] = None
