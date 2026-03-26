@@ -71,6 +71,32 @@ async def _fetch_recent_published_posts(session) -> list[dict]:
         return []
 
 
+async def _fetch_todays_generated_topics(session, exclude_slot_id: str = None) -> list[dict]:
+    """Fetch titles/bodies from PostOptions generated today (not yet published).
+    This provides cross-slot topic awareness within the same day."""
+    try:
+        today = datetime.now(DUBAI_TZ).date()
+        query = (
+            select(PostOption)
+            .join(ContentSlot, PostOption.slot_id == ContentSlot.id)
+            .where(ContentSlot.scheduled_date == today)
+        )
+        if exclude_slot_id:
+            query = query.where(ContentSlot.id != UUID(exclude_slot_id))
+        result = await session.execute(query)
+        options = result.scalars().all()
+        return [
+            {
+                "title": o.title_ru,
+                "body_snippet": (o.body_ru or "")[:150],
+            }
+            for o in options
+        ]
+    except Exception as e:
+        logger.error(f"Failed to fetch today's generated topics: {e}")
+        return []
+
+
 @celery_app.task(bind=True, max_retries=2)
 def create_daily_slots_task(self, target_date_str: str = None):
     """
@@ -243,9 +269,13 @@ def generate_content_for_slot(self, slot_id: str):
 
         # Fetch recent published posts for topic deduplication
         recent_posts = []
+        todays_topics = []
         async with AsyncSessionLocal() as db:
             recent_posts = await _fetch_recent_published_posts(db)
-        logger.info(f"Fetched {len(recent_posts)} recent posts for dedup")
+            todays_topics = await _fetch_todays_generated_topics(db, exclude_slot_id=slot_id)
+        # Merge: today's generated options first (highest priority), then published
+        all_dedup_context = todays_topics + recent_posts
+        logger.info(f"Dedup context: {len(todays_topics)} today's topics + {len(recent_posts)} recent published")
 
         # Generate content (outside DB session)
         generator = ContentGenerator()
@@ -254,10 +284,27 @@ def generate_content_for_slot(self, slot_id: str):
         options_to_save = []
         category = "real_estate_news" if slot_data["content_type"] == "real_estate" else "general"
 
-        option_pairs = [
-            ("A", article_dicts[:5]),
-            ("B", article_dicts[5:10] if len(article_dicts) > 5 else article_dicts[:5])
-        ]
+        import random
+        if len(article_dicts) > 5:
+            option_pairs = [
+                ("A", article_dicts[:5]),
+                ("B", article_dicts[5:10]),
+            ]
+        else:
+            # Shuffle for B so Claude sees a different article ordering
+            shuffled = article_dicts.copy()
+            random.shuffle(shuffled)
+            option_pairs = [
+                ("A", article_dicts),
+                ("B", shuffled),
+            ]
+
+        # Extract voice_preset and album_mode once (same for both options)
+        voice_preset = "professional"
+        if prompt_config_dict:
+            voice_preset = prompt_config_dict.get("voice_preset", "professional")
+        album_mode = slot_data.get("album_mode", False)
+
         for idx, (label, article_subset) in enumerate(option_pairs):
             # Space out Claude API calls to stay under per-minute token limit
             if idx > 0:
@@ -267,12 +314,14 @@ def generate_content_for_slot(self, slot_id: str):
             try:
                 logger.info(f"Generating post {label} for slot {slot_id}")
 
-                # Extract voice_preset from prompt config
-                voice_preset = "professional"
-                if prompt_config_dict:
-                    voice_preset = prompt_config_dict.get("voice_preset", "professional")
-
-                album_mode = slot_data.get("album_mode", False)
+                # For option B, add option A's generated title to dedup context
+                effective_dedup = list(all_dedup_context)
+                if idx > 0 and options_to_save:
+                    prev = options_to_save[-1]["post"]
+                    effective_dedup.insert(0, {
+                        "title": prev.title_ru,
+                        "body_snippet": (prev.body_ru or "")[:150],
+                    })
 
                 # Generate post content
                 post = await generator.generate_post(
@@ -280,7 +329,7 @@ def generate_content_for_slot(self, slot_id: str):
                     content_type=slot_data["content_type"],
                     category=category,
                     prompt_config=prompt_config_dict,
-                    recent_posts=recent_posts,
+                    recent_posts=effective_dedup,
                     voice_preset=voice_preset,
                     album_mode=album_mode,
                 )

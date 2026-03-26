@@ -113,7 +113,7 @@ def _repair_html(text: str) -> str:
 
 
 def _build_recent_posts_section(recent_posts: list[dict]) -> str:
-    """Build a prompt section listing recently published posts to avoid topic repetition."""
+    """Build a prompt section listing already-covered topics to avoid repetition."""
     if not recent_posts:
         return ""
     lines = []
@@ -122,10 +122,12 @@ def _build_recent_posts_section(recent_posts: list[dict]) -> str:
     posts_text = "\n".join(lines)
     return f"""
 
-RECENTLY PUBLISHED (DO NOT repeat these topics or cover the same news):
+ALREADY COVERED TOPICS (DO NOT repeat these — choose a COMPLETELY DIFFERENT subject):
 {posts_text}
 
-IMPORTANT: Create content about a DIFFERENT topic from the ones listed above. Do not rewrite, rephrase, or cover the same events/news even from a different angle."""
+CRITICAL: You MUST write about a topic that is NOT covered above.
+Do not rewrite, rephrase, or cover the same events/news even from a different angle.
+If all source articles are about topics already covered, find a secondary detail or a completely different story from the articles."""
 
 
 def _build_generation_prompt(
