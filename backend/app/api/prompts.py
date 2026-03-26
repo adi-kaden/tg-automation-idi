@@ -33,6 +33,7 @@ def _to_response(config: PromptConfig) -> PromptConfigResponse:
         system_prompt=config.system_prompt,
         generation_prompt=config.generation_prompt,
         tone=config.tone,
+        voice_preset=config.voice_preset or "professional",
         max_length_chars=config.max_length_chars,
         image_style_prompt=config.image_style_prompt,
         image_aspect_ratio=config.image_aspect_ratio,
@@ -56,13 +57,15 @@ Max Length: {{max_length}} characters
 SOURCE ARTICLES:
 {{articles}}
 
+{{recent_posts}}
+
 Generate a Telegram post with the following structure (ALL IN RUSSIAN):
 
-1. TITLE (Russian): A catchy, engaging headline in Russian (max 100 chars)
-2. BODY (Russian): The main post content in Russian (400-{{max_length}} characters maximum).
-   CRITICAL: The ENTIRE Telegram message (title + body + hashtags + subscription line)
-   must fit within 1024 characters. Keep the body concise.
-   Include key facts, insights, and a subtle call-to-action if relevant. Do NOT include hashtags.
+1. TITLE (Russian): A catchy, engaging headline in Russian starting with a relevant emoji (max 100 chars)
+2. BODY (Russian): The main post content as Telegram-compatible HTML (use <b>, <i>, <blockquote> only; use \\n for line breaks).
+   CRITICAL: The ENTIRE Telegram message (title + body + footer) must fit within 1024 characters INCLUDING HTML tags.
+   Aim for ~500-600 characters of body text. Bold key numbers, statistics, prices, and important terms with <b> tags.
+   Use <blockquote> for expert quotes, key stats, or dramatic takeaways. Do NOT include hashtags.
 3. IMAGE_PROMPT: A detailed prompt for generating an accompanying image (describe the visual concept, composition, subject matter - suitable for a real estate/Dubai context). Do NOT include style/lighting/color instructions — a separate style layer will be applied.
 4. QUALITY_SCORE: Rate the newsworthiness and engagement potential (0.0-1.0)
 5. IMAGE_STYLE: Choose the single most appropriate visual style for the image based on the post content:
@@ -115,6 +118,7 @@ async def _get_or_create_global(db: AsyncSession) -> PromptConfig:
             system_prompt=DEFAULT_SYSTEM_PROMPT,
             generation_prompt=DEFAULT_GENERATION_PROMPT,
             tone="professional",
+            voice_preset="professional",
             max_length_chars=700,
             image_style_prompt=DEFAULT_IMAGE_STYLE_PROMPT,
             image_aspect_ratio="16:9",
@@ -316,6 +320,7 @@ async def test_generate(
         "system_prompt": data.system_prompt,
         "generation_prompt": data.generation_prompt,
         "tone": data.tone,
+        "voice_preset": data.voice_preset or "professional",
         "max_length_chars": data.max_length_chars,
         "image_style_prompt": data.image_style_prompt,
         "image_aspect_ratio": data.image_aspect_ratio,
@@ -330,6 +335,7 @@ async def test_generate(
         content_type=content_type,
         category=category,
         prompt_config=prompt_config,
+        voice_preset=data.voice_preset or "professional",
     )
 
     # Generate image

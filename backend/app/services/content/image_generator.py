@@ -3,6 +3,7 @@ Image Generator using Google Imagen API.
 
 Generates images for Telegram posts based on prompts.
 """
+import asyncio
 import base64
 import logging
 from datetime import datetime
@@ -208,6 +209,51 @@ Note: No text or watermarks in the image"""
             logger.error(f"Image generation failed: {e}")
             # Don't raise - image is optional, post can go without
             return (None, None, None)
+
+    async def generate_album_images(
+        self,
+        prompts: list[str],
+        category: str,
+        slot_id: str,
+        option_label: str,
+        prompt_config: dict | None = None,
+        image_style: str | None = None,
+    ) -> list[tuple[Optional[str], Optional[str], Optional[str]]]:
+        """
+        Generate multiple images for an album/media group.
+
+        Uses asyncio.gather with a semaphore (max 3 concurrent) to balance
+        speed vs. API rate limits. Partial failures are tolerated.
+
+        Returns:
+            List of (image_url, local_path, image_base64) tuples
+        """
+        semaphore = asyncio.Semaphore(3)
+
+        async def _generate_one(idx: int, prompt: str):
+            async with semaphore:
+                return await self.generate_image(
+                    prompt=prompt,
+                    category=category,
+                    slot_id=f"{slot_id}_album{idx}",
+                    option_label=option_label,
+                    prompt_config=prompt_config,
+                    image_style=image_style,
+                )
+
+        tasks = [_generate_one(i, p) for i, p in enumerate(prompts)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Filter out exceptions, keep successful results
+        album_images = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"Album image {i} generation failed: {result}")
+                album_images.append((None, None, None))
+            else:
+                album_images.append(result)
+
+        return album_images
 
     async def generate_image_from_url(
         self,

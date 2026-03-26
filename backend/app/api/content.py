@@ -20,6 +20,7 @@ from app.models.user import User
 from app.schemas.content import (
     ContentSlotResponse,
     ContentSlotDetail,
+    ContentSlotUpdate,
     PostOptionResponse,
     PostOptionUpdate,
     SlotSelectionRequest,
@@ -337,6 +338,14 @@ async def publish_slot(
         except json.JSONDecodeError:
             hashtags = []
 
+    # Parse album images if present
+    album_images = None
+    if option.album_images_data:
+        try:
+            album_images = json.loads(option.album_images_data)
+        except json.JSONDecodeError:
+            album_images = None
+
     # Create post content (Russian only)
     content = PostContent(
         title_ru=option.title_ru,
@@ -345,10 +354,14 @@ async def publish_slot(
         image_url=option.image_url,
         image_local_path=option.image_local_path,
         image_data=option.image_data,  # Base64 encoded image
+        album_images_data=album_images,
     )
 
-    # Publish to Telegram
-    publish_result = await publisher.publish_post(content)
+    # Publish to Telegram (album or single post)
+    if album_images and len(album_images) > 0:
+        publish_result = await publisher.publish_album(content)
+    else:
+        publish_result = await publisher.publish_post(content)
 
     if not publish_result.success:
         return PublishResponse(
@@ -387,6 +400,34 @@ async def publish_slot(
         published_post_id=published_post.id,
         channel_id=publish_result.channel_id,
     )
+
+
+@router.patch("/slots/{slot_id}", response_model=ContentSlotResponse)
+async def update_slot(
+    slot_id: UUID,
+    update: ContentSlotUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Update a content slot (e.g., toggle album_mode).
+    """
+    result = await db.execute(
+        select(ContentSlot).where(ContentSlot.id == slot_id)
+    )
+    slot = result.scalar_one_or_none()
+
+    if not slot:
+        raise HTTPException(status_code=404, detail="Slot not found")
+
+    update_data = update.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(slot, field, value)
+
+    await db.commit()
+    await db.refresh(slot)
+
+    return slot
 
 
 @router.post("/slots/{slot_id}/reset")

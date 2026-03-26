@@ -19,9 +19,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { TelegramEditor } from '@/components/editor/TelegramEditor';
+import { TelegramCharCounter } from '@/components/editor/TelegramCharCounter';
 import {
   Dialog,
   DialogContent,
@@ -36,9 +37,18 @@ import {
   usePublishSlot,
   useUpdateOption,
   useRegenerateSlot,
+  useUpdateSlot,
 } from '@/hooks/use-api';
 import { toast } from 'sonner';
 import type { PostOption } from '@/types';
+
+// ---------------------------------------------------------------------------
+// Allow only Telegram-supported HTML tags in previews
+// ---------------------------------------------------------------------------
+function sanitizePreviewHtml(html: string): string {
+  // Strip any tag that is NOT b, i, blockquote, or a (with optional attrs)
+  return html.replace(/<(?!\/?(?:b|i|blockquote|a)(?:\s[^>]*)?>)[^>]+>/gi, '');
+}
 
 export default function SlotDetailPage() {
   const params = useParams();
@@ -50,6 +60,7 @@ export default function SlotDetailPage() {
   const publishMutation = usePublishSlot();
   const updateMutation = useUpdateOption();
   const regenerateMutation = useRegenerateSlot();
+  const updateSlotMutation = useUpdateSlot();
 
   const [editingOption, setEditingOption] = useState<PostOption | null>(null);
   const [editForm, setEditForm] = useState({
@@ -254,6 +265,25 @@ export default function SlotDetailPage() {
               </Badge>
               <div className={`h-3 w-3 rounded-full ${getStatusColor(slot.status)}`} />
               <span className="text-slate-600 capitalize">{slot.status.replace('_', ' ')}</span>
+              {/* Album mode toggle */}
+              <button
+                onClick={() =>
+                  updateSlotMutation.mutate(
+                    { slotId: slot.id, data: { album_mode: !slot.album_mode } },
+                    { onSuccess: () => toast.success(slot.album_mode ? 'Album mode disabled' : 'Album mode enabled') }
+                  )
+                }
+                disabled={slot.status === 'published' || updateSlotMutation.isPending}
+                className={`ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-xs font-medium transition-colors ${
+                  slot.album_mode
+                    ? 'bg-violet-50 border-violet-300 text-violet-700'
+                    : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+                }`}
+                title="Toggle album mode (media group)"
+              >
+                <ImageIcon className="h-3 w-3" />
+                {slot.album_mode ? 'Album ON' : 'Album'}
+              </button>
             </div>
             <p className="text-slate-500">
               {new Date(slot.scheduled_at).toLocaleDateString('en-US', {
@@ -381,14 +411,39 @@ export default function SlotDetailPage() {
               <CardContent className="space-y-3 p-4">
                 {/* Image Preview - smaller */}
                 {(option.image_data || option.image_url) ? (
-                  <div className="relative aspect-[16/9] max-h-40 rounded-lg overflow-hidden bg-slate-100">
-                    <img
-                      src={option.image_data
-                        ? `data:image/png;base64,${option.image_data}`
-                        : option.image_url || ''}
-                      alt={`Option ${option.option_label}`}
-                      className="w-full h-full object-cover"
-                    />
+                  <div className="space-y-2">
+                    <div className="relative aspect-[16/9] max-h-40 rounded-lg overflow-hidden bg-slate-100">
+                      <img
+                        src={option.image_data
+                          ? `data:image/png;base64,${option.image_data}`
+                          : option.image_url || ''}
+                        alt={`Option ${option.option_label}`}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    {/* Album images gallery */}
+                    {option.album_images_data && (() => {
+                      try {
+                        const albumImages: string[] = JSON.parse(option.album_images_data);
+                        if (albumImages.length === 0) return null;
+                        return (
+                          <div className="flex gap-1.5 overflow-x-auto pb-1">
+                            {albumImages.map((img, idx) => (
+                              <div key={idx} className="relative w-16 h-16 rounded overflow-hidden bg-slate-100 shrink-0">
+                                <img
+                                  src={`data:image/png;base64,${img}`}
+                                  alt={`Album ${idx + 1}`}
+                                  className="w-full h-full object-cover"
+                                />
+                                <span className="absolute bottom-0 right-0 bg-black/60 text-white text-[9px] px-1 rounded-tl">
+                                  +{idx + 1}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      } catch { return null; }
+                    })()}
                   </div>
                 ) : (
                   <div className="h-24 rounded-lg bg-slate-100 flex items-center justify-center">
@@ -402,7 +457,10 @@ export default function SlotDetailPage() {
                 {/* Russian Content Only */}
                 <div className="space-y-2">
                   <h4 className="font-semibold text-base leading-tight">{option.title_ru}</h4>
-                  <p className="text-sm text-slate-600 whitespace-pre-wrap line-clamp-6">{option.body_ru}</p>
+                  <div
+                    className="text-sm text-slate-600 whitespace-pre-wrap line-clamp-6"
+                    dangerouslySetInnerHTML={{ __html: sanitizePreviewHtml(option.body_ru) }}
+                  />
                 </div>
 
                 {/* Actions */}
@@ -469,11 +527,15 @@ export default function SlotDetailPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="body_ru">Body</Label>
-              <Textarea
-                id="body_ru"
-                value={editForm.body_ru}
-                onChange={(e) => setEditForm({ ...editForm, body_ru: e.target.value })}
-                rows={10}
+              <TelegramEditor
+                content={editForm.body_ru}
+                onChange={(html) => setEditForm({ ...editForm, body_ru: html })}
+                placeholder="Текст поста..."
+              />
+              <TelegramCharCounter
+                title={editForm.title_ru}
+                bodyHtml={editForm.body_ru}
+                hashtags={editingOption?.hashtags ?? []}
               />
             </div>
           </div>
@@ -506,7 +568,10 @@ export default function SlotDetailPage() {
             <div className="py-4">
               <div className="rounded-lg border p-4 space-y-2">
                 <h4 className="font-semibold">{selectedOption.title_ru}</h4>
-                <p className="text-sm text-slate-600 line-clamp-3">{selectedOption.body_ru}</p>
+                <div
+                  className="text-sm text-slate-600 line-clamp-3"
+                  dangerouslySetInnerHTML={{ __html: sanitizePreviewHtml(selectedOption.body_ru) }}
+                />
               </div>
             </div>
           )}

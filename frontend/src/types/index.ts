@@ -77,6 +77,7 @@ export interface ContentSlot {
   content_type: 'real_estate' | 'general_dubai';
   status: SlotStatus;
   approval_deadline: string;
+  album_mode: boolean;
   selected_option_id: string | null;
   selected_by: 'human' | 'ai' | null;
   selected_by_user_id: string | null;
@@ -102,6 +103,8 @@ export interface PostOption {
   image_url: string | null;
   image_data: string | null;  // Base64 encoded image
   image_style?: string;
+  album_image_prompts: string | null;  // JSON array of image prompts
+  album_images_data: string | null;  // JSON array of base64 images
   category: ContentCategory;
   ai_quality_score: number;
   content_type: string;
@@ -185,6 +188,7 @@ export interface PromptConfig {
   system_prompt: string;
   generation_prompt: string;
   tone: string;
+  voice_preset: string;
   max_length_chars: number;
   image_style_prompt: string;
   image_aspect_ratio: string;
@@ -197,6 +201,7 @@ export interface PromptConfigUpdate {
   system_prompt?: string;
   generation_prompt?: string;
   tone?: string;
+  voice_preset?: string;
   max_length_chars?: number;
   image_aspect_ratio?: string;
 }
@@ -211,6 +216,7 @@ export interface TestGenerateRequest {
   system_prompt: string;
   generation_prompt: string;
   tone: string;
+  voice_preset?: string;
   max_length_chars: number;
   image_aspect_ratio: string;
   slot_number?: number;

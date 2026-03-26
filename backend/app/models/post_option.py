@@ -35,6 +35,10 @@ class PostOption(Base):
     image_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
     image_style: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # Claude-selected visual style
 
+    # Album mode (media group) — JSON arrays
+    album_image_prompts: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array of image prompts
+    album_images_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array of base64 images
+
     # Metadata
     category: Mapped[str] = mapped_column(String(30), nullable=False)
     source_article_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

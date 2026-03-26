@@ -17,6 +17,11 @@ import {
 import type { PromptConfig, PromptConfigUpdate, TestGenerateResponse } from '@/types';
 
 const TONE_OPTIONS = ['professional', 'exciting', 'analytical', 'informative', 'urgent'];
+const VOICE_PRESET_OPTIONS = [
+  { value: 'professional', label: 'Professional', desc: 'Measured, authoritative, industry terminology' },
+  { value: 'punchy', label: 'Punchy / Tabloid', desc: 'Short sentences, bold stats, Mash-style energy' },
+  { value: 'analytical', label: 'Analytical', desc: 'Data-first, numbers lead, comparative analysis' },
+];
 const ASPECT_RATIO_OPTIONS = ['16:9', '1:1', '9:16'];
 const SLOT_INFO = [
   { number: 1, time: '08:00', type: 'Real Estate' },
@@ -54,6 +59,7 @@ function PromptForm({
   const [systemPrompt, setSystemPrompt] = useState('');
   const [generationPrompt, setGenerationPrompt] = useState('');
   const [tone, setTone] = useState('professional');
+  const [voicePreset, setVoicePreset] = useState('professional');
   const [maxLength, setMaxLength] = useState(1500);
   const [imageAspectRatio, setImageAspectRatio] = useState('16:9');
 
@@ -62,6 +68,7 @@ function PromptForm({
       setSystemPrompt(config.system_prompt);
       setGenerationPrompt(config.generation_prompt);
       setTone(config.tone);
+      setVoicePreset(config.voice_preset || 'professional');
       setMaxLength(config.max_length_chars);
       setImageAspectRatio(config.image_aspect_ratio);
     }
@@ -71,6 +78,7 @@ function PromptForm({
     system_prompt: systemPrompt,
     generation_prompt: generationPrompt,
     tone,
+    voice_preset: voicePreset,
     max_length_chars: maxLength,
     image_aspect_ratio: imageAspectRatio,
   });
@@ -82,6 +90,28 @@ function PromptForm({
         <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider">
           Content Generation (Claude)
         </h3>
+
+        {/* Voice Preset */}
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-2">Voice Preset</label>
+          <div className="grid grid-cols-3 gap-3">
+            {VOICE_PRESET_OPTIONS.map((vp) => (
+              <button
+                key={vp.value}
+                type="button"
+                onClick={() => setVoicePreset(vp.value)}
+                className={`rounded-lg border-2 p-3 text-left transition-colors ${
+                  voicePreset === vp.value
+                    ? 'border-indigo-500 bg-indigo-50'
+                    : 'border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <p className="text-sm font-medium">{vp.label}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{vp.desc}</p>
+              </button>
+            ))}
+          </div>
+        </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -221,7 +251,10 @@ function PromptForm({
           </div>
           <div>
             <p className="text-xs text-slate-500 mb-1">Body</p>
-            <p className="text-sm whitespace-pre-wrap">{testResult.body_ru}</p>
+            <div
+              className="text-sm whitespace-pre-wrap [&_b]:font-bold [&_i]:italic [&_blockquote]:border-l-2 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:text-slate-600"
+              dangerouslySetInnerHTML={{ __html: testResult.body_ru }}
+            />
           </div>
           {testResult.image_base64 && (
             <div>
@@ -268,6 +301,7 @@ export default function PromptsPage() {
         system_prompt: data.system_prompt!,
         generation_prompt: data.generation_prompt!,
         tone: data.tone!,
+        voice_preset: data.voice_preset,
         max_length_chars: data.max_length_chars!,
         image_aspect_ratio: data.image_aspect_ratio!,
       },
@@ -286,6 +320,7 @@ export default function PromptsPage() {
         system_prompt: data.system_prompt!,
         generation_prompt: data.generation_prompt!,
         tone: data.tone!,
+        voice_preset: data.voice_preset,
         max_length_chars: data.max_length_chars!,
         image_aspect_ratio: data.image_aspect_ratio!,
         slot_number: slotNumber,

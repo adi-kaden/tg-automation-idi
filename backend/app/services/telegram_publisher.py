@@ -5,6 +5,7 @@ Publishes bilingual posts to Telegram channel using python-telegram-bot.
 """
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -41,6 +42,7 @@ class PostContent:
     # Keep EN fields for backwards compatibility (empty strings)
     title_en: str = ""
     body_en: str = ""
+    album_images_data: Optional[list[str]] = None  # Additional base64 images for album
 
 
 class TelegramPublisher:
@@ -103,27 +105,16 @@ class TelegramPublisher:
         # +1 for the newline between title block and body
         overhead = len("\n".join(overhead_parts)) + 1  # +1 for body's leading \n
 
-        escaped_body = self._escape_html(body)
+        sanitized_body = self._sanitize_telegram_html(body)
 
-        # Truncate body if needed to fit within max_length
-        if max_length > 0 and (overhead + len(escaped_body)) > max_length:
+        # Truncate body if needed to fit within max_length (tag-aware)
+        if max_length > 0 and (overhead + len(sanitized_body)) > max_length:
             available = max_length - overhead - 3  # 3 for "..."
             if available > 100:
-                # Cut at last paragraph break or sentence within limit
-                truncated = escaped_body[:available]
-                # Try to cut at last paragraph break
-                last_para = truncated.rfind("\n\n")
-                if last_para > available // 2:
-                    truncated = truncated[:last_para]
-                else:
-                    # Try to cut at last sentence
-                    last_period = truncated.rfind(". ")
-                    if last_period > available // 2:
-                        truncated = truncated[:last_period + 1]
-                escaped_body = truncated + "..."
+                sanitized_body = self._truncate_html(sanitized_body, available)
 
         # Build the message
-        message_parts = [title_line, "", escaped_body]
+        message_parts = [title_line, "", sanitized_body]
         if hashtag_text:
             message_parts.extend(["", hashtag_text])
         if channel_line:
@@ -140,6 +131,120 @@ class TelegramPublisher:
             .replace("<", "&lt;")
             .replace(">", "&gt;")
         )
+
+    @staticmethod
+    def _sanitize_telegram_html(text: str) -> str:
+        """
+        Sanitize HTML for Telegram, preserving allowed tags and escaping the rest.
+
+        Allowed tags: b, i, u, s, code, pre, blockquote, a, tg-spoiler.
+        All other angle-bracket sequences are escaped to &lt;/&gt;.
+        Bare & signs are escaped to &amp; unless already part of an HTML entity.
+        """
+        # Allowed tag pattern — matches opening, closing, and self-closing variants.
+        # For <a> we allow href="..." attribute; for blockquote we allow expandable attr.
+        ALLOWED_TAG_RE = re.compile(
+            r'^<(/?)(?:'
+            r'b|i|u|s|code|pre|tg-spoiler'
+            r'|blockquote(?:\s+expandable)?'
+            r'|a(?:\s+href=["\']https?://[^"\'<>]*["\'])?'
+            r')(/?)>$',
+            re.IGNORECASE,
+        )
+
+        # First escape bare & (not already part of &amp; / &lt; / &gt; / &quot;)
+        text = re.sub(r'&(?!(?:amp|lt|gt|quot);)', '&amp;', text)
+
+        # Now walk through all <...> sequences and decide: keep or escape
+        def replace_tag(m: re.Match) -> str:
+            tag = m.group(0)
+            if ALLOWED_TAG_RE.match(tag):
+                return tag
+            # Escape the angle brackets of disallowed tags
+            return tag.replace('<', '&lt;').replace('>', '&gt;')
+
+        return re.sub(r'<[^>]*>', replace_tag, text)
+
+    @staticmethod
+    def _truncate_html(html: str, max_chars: int) -> str:
+        """
+        Truncate HTML to at most max_chars visible characters, never cutting inside
+        a tag, and close any tags left open after truncation.
+
+        Appends '...' at the truncation point.
+        """
+        # Void/self-closing tags that never need a closing counterpart
+        VOID_TAGS = {'br', 'hr', 'img', 'input'}
+
+        open_tags: list[str] = []   # stack of tag names that need closing
+        char_count = 0
+        i = 0
+        result_parts: list[str] = []
+        truncated = False
+
+        while i < len(html):
+            if html[i] == '<':
+                # Find end of tag
+                end = html.find('>', i)
+                if end == -1:
+                    # Malformed — treat remainder as text
+                    remaining = html[i:]
+                    chars_needed = max_chars - char_count
+                    if len(remaining) <= chars_needed:
+                        result_parts.append(remaining)
+                        char_count += len(remaining)
+                    else:
+                        result_parts.append(remaining[:chars_needed])
+                        char_count = max_chars
+                        truncated = True
+                    break
+
+                tag_text = html[i:end + 1]
+                tag_inner = tag_text[1:-1].strip()
+
+                # Determine tag name and whether it's a closing tag
+                is_closing = tag_inner.startswith('/')
+                tag_name = tag_inner.lstrip('/').split()[0].split('/')[0].lower()
+
+                result_parts.append(tag_text)
+                i = end + 1
+
+                if tag_name in VOID_TAGS or tag_inner.endswith('/'):
+                    pass  # self-closing, nothing to track
+                elif is_closing:
+                    # Pop from stack (remove last matching open tag)
+                    for k in range(len(open_tags) - 1, -1, -1):
+                        if open_tags[k] == tag_name:
+                            open_tags.pop(k)
+                            break
+                else:
+                    open_tags.append(tag_name)
+
+            else:
+                # Plain text character
+                if char_count >= max_chars:
+                    truncated = True
+                    break
+                result_parts.append(html[i])
+                char_count += 1
+                i += 1
+
+                if char_count == max_chars and i < len(html):
+                    # Check there's actually more content (non-tag) ahead
+                    rest = html[i:]
+                    has_more_text = bool(re.sub(r'<[^>]*>', '', rest).strip())
+                    if has_more_text:
+                        truncated = True
+                        break
+
+        if truncated:
+            result_parts.append('...')
+
+        # Close any still-open tags in reverse order
+        for tag_name in reversed(open_tags):
+            result_parts.append(f'</{tag_name}>')
+
+        return ''.join(result_parts)
 
     async def _send_with_retry(
         self,
@@ -328,6 +433,156 @@ class TelegramPublisher:
             )
         except Exception as e:
             logger.error(f"Unexpected error publishing post: {e}")
+            return PublishResult(
+                success=False,
+                error=str(e),
+                channel_id=self.channel_id,
+            )
+
+    async def publish_album(
+        self,
+        content: PostContent,
+    ) -> PublishResult:
+        """
+        Publish a media group (album) to the Telegram channel.
+
+        The first image carries the caption (formatted the same way as a single
+        photo post). Additional images come from content.album_images_data.
+
+        Args:
+            content: PostContent with Russian content, primary image_data, and
+                     optional album_images_data for extra images.
+
+        Returns:
+            PublishResult with message_id from the first message in the group.
+        """
+        import base64
+        from io import BytesIO
+
+        logger.info(f"Publishing album to channel {self.channel_id}")
+
+        try:
+            # Build caption for the first image (same rules as single-photo)
+            text_ru = self._format_post_html(
+                title=content.title_ru,
+                body=content.body_ru,
+                hashtags=content.hashtags,
+                language="ru",
+                max_length=self.CAPTION_LIMIT,
+            )
+
+            # --- Build the media list ---
+            media: list[InputMediaPhoto] = []
+
+            # First image: primary image_data carries the caption
+            if content.image_data:
+                try:
+                    img_bytes = base64.b64decode(content.image_data)
+                    buf = BytesIO(img_bytes)
+                    buf.name = "image_0.png"
+                    media.append(InputMediaPhoto(
+                        media=buf,
+                        caption=text_ru,
+                        parse_mode=ParseMode.HTML,
+                    ))
+                    logger.info(f"Album primary image: {len(img_bytes)} bytes")
+                except Exception as e:
+                    logger.error(f"Failed to decode primary album image: {e}")
+
+            # Additional images (no caption)
+            if content.album_images_data:
+                for idx, img_b64 in enumerate(content.album_images_data, start=1):
+                    try:
+                        img_bytes = base64.b64decode(img_b64)
+                        buf = BytesIO(img_bytes)
+                        buf.name = f"image_{idx}.png"
+                        media.append(InputMediaPhoto(media=buf))
+                        logger.info(f"Album image {idx}: {len(img_bytes)} bytes")
+                    except Exception as e:
+                        logger.warning(f"Skipping album image {idx}, decode error: {e}")
+
+            if not media:
+                # No images at all — fall back to a plain text message
+                logger.warning("publish_album called with no images; falling back to text")
+                message_id = await self._send_with_retry(
+                    self.bot.send_message,
+                    chat_id=self.channel_id,
+                    text=text_ru,
+                    parse_mode=ParseMode.HTML,
+                )
+                if not message_id:
+                    return PublishResult(
+                        success=False,
+                        error="Failed to publish album (no images, text fallback also failed)",
+                        channel_id=self.channel_id,
+                    )
+                return PublishResult(
+                    success=True,
+                    message_id_ru=message_id,
+                    channel_id=self.channel_id,
+                )
+
+            # Send the album with retry logic
+            last_error: Optional[str] = None
+            messages = None
+
+            for attempt in range(self.MAX_RETRIES):
+                try:
+                    messages = await self.bot.send_media_group(
+                        chat_id=self.channel_id,
+                        media=media,
+                    )
+                    break
+
+                except RetryAfter as e:
+                    wait_time = e.retry_after
+                    logger.warning(f"Rate limited (album), waiting {wait_time}s")
+                    await asyncio.sleep(wait_time)
+
+                except TimedOut as e:
+                    wait_time = self.RETRY_DELAY_BASE * (2 ** attempt)
+                    logger.warning(
+                        f"Timeout sending album, attempt {attempt + 1}/{self.MAX_RETRIES}, "
+                        f"waiting {wait_time}s"
+                    )
+                    await asyncio.sleep(wait_time)
+                    last_error = str(e)
+
+                except TelegramError as e:
+                    logger.error(f"Telegram error sending album: {e}")
+                    last_error = str(e)
+                    if "chat not found" in str(e).lower():
+                        raise ValueError(f"Channel not found: {self.channel_id}")
+                    if "bot was blocked" in str(e).lower():
+                        raise ValueError("Bot was blocked by the channel")
+                    wait_time = self.RETRY_DELAY_BASE * (2 ** attempt)
+                    await asyncio.sleep(wait_time)
+
+            if not messages:
+                return PublishResult(
+                    success=False,
+                    error=f"Failed to publish album after {self.MAX_RETRIES} attempts: {last_error}",
+                    channel_id=self.channel_id,
+                )
+
+            message_id_ru = messages[0].message_id
+            logger.info(f"Published album, first message_id={message_id_ru}")
+
+            return PublishResult(
+                success=True,
+                message_id_ru=message_id_ru,
+                channel_id=self.channel_id,
+            )
+
+        except ValueError as e:
+            logger.error(f"Configuration error publishing album: {e}")
+            return PublishResult(
+                success=False,
+                error=str(e),
+                channel_id=self.channel_id,
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error publishing album: {e}")
             return PublishResult(
                 success=False,
                 error=str(e),

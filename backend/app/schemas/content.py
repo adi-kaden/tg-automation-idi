@@ -23,12 +23,18 @@ class ContentSlotCreate(ContentSlotBase):
     pass
 
 
+class ContentSlotUpdate(BaseModel):
+    """Schema for updating a content slot."""
+    album_mode: Optional[bool] = None
+
+
 class ContentSlotResponse(ContentSlotBase):
     """Schema for content slot in responses."""
     id: UUID
     scheduled_at: datetime
     status: str
     approval_deadline: datetime
+    album_mode: bool = False
     selected_option_id: Optional[UUID] = None
     selected_by: Optional[str] = None
     published_post_id: Optional[UUID] = None
@@ -82,6 +88,9 @@ class PostOptionResponse(PostOptionBase):
     image_url: Optional[str] = None
     image_local_path: Optional[str] = None
     image_data: Optional[str] = None  # Base64 encoded image
+    image_style: Optional[str] = None
+    album_image_prompts: Optional[str] = None  # JSON array of image prompts
+    album_images_data: Optional[str] = None  # JSON array of base64 images
     source_article_ids: Optional[str] = None  # JSON array of UUIDs
     ai_quality_score: float
     is_selected: bool

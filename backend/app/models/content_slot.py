@@ -1,4 +1,4 @@
-from sqlalchemy import String, Integer, Date, DateTime, ForeignKey, UniqueConstraint, func
+from sqlalchemy import String, Integer, Boolean, Date, DateTime, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, date
 from uuid import UUID, uuid4
@@ -42,6 +42,9 @@ class ContentSlot(Base):
     selected_by_user_id: Mapped[Optional[UUID]] = mapped_column(
         ForeignKey("users.id"), nullable=True
     )
+    album_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    # When True, Claude generates multiple image prompts and images are sent as media group
+
     published_post_id: Mapped[Optional[UUID]] = mapped_column(
         ForeignKey("published_posts.id", use_alter=True), nullable=True
     )

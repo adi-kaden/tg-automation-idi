@@ -9,6 +9,7 @@ class PromptConfigBase(BaseModel):
     system_prompt: str = Field(..., min_length=1)
     generation_prompt: str = Field(..., min_length=1)
     tone: str = Field(default="professional")
+    voice_preset: Optional[str] = Field(None, max_length=30)
     max_length_chars: int = Field(default=1500, ge=200, le=5000)
     image_style_prompt: str = Field(default="")
     image_aspect_ratio: str = Field(default="16:9")
@@ -19,6 +20,7 @@ class PromptConfigUpdate(BaseModel):
     system_prompt: Optional[str] = None
     generation_prompt: Optional[str] = None
     tone: Optional[str] = None
+    voice_preset: Optional[str] = Field(default=None, max_length=30)
     max_length_chars: Optional[int] = Field(default=None, ge=200, le=5000)
     image_style_prompt: Optional[str] = None
     image_aspect_ratio: Optional[str] = None
@@ -29,6 +31,7 @@ class PromptConfigResponse(PromptConfigBase):
     id: str
     scope: str
     slot_number: Optional[int] = None
+    voice_preset: str = "professional"
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -48,6 +51,7 @@ class TestGenerateRequest(BaseModel):
     system_prompt: str
     generation_prompt: str
     tone: str = "professional"
+    voice_preset: Optional[str] = Field("professional", max_length=30)
     max_length_chars: int = 1500
     image_style_prompt: str = ""
     image_aspect_ratio: str = "16:9"

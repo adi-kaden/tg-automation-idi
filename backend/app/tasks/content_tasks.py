@@ -23,6 +23,7 @@ from app.services.content.slot_manager import SlotManager, DUBAI_TZ
 from app.models.prompt_config import PromptConfig
 from app.services.telegram_publisher import TelegramPublisher, PostContent
 from app.services.notification_service import send_notification, NotificationType
+from app.services.alert_service import send_alert
 from app.models.published_post import PublishedPost
 from app.tasks.celery_app import celery_app
 
@@ -165,6 +166,7 @@ def generate_content_for_slot(self, slot_id: str):
                 "id": str(slot.id),
                 "content_type": slot.content_type,
                 "slot_number": slot.slot_number,
+                "album_mode": getattr(slot, "album_mode", False),
             }
 
             # Get relevant articles
@@ -235,6 +237,7 @@ def generate_content_for_slot(self, slot_id: str):
                     "max_length_chars": pc.max_length_chars,
                     "image_style_prompt": pc.image_style_prompt,
                     "image_aspect_ratio": pc.image_aspect_ratio,
+                    "voice_preset": getattr(pc, "voice_preset", "professional"),
                 }
                 logger.info(f"Loaded prompt config: scope={pc.scope}, slot={pc.slot_number}")
 
@@ -251,12 +254,25 @@ def generate_content_for_slot(self, slot_id: str):
         options_to_save = []
         category = "real_estate_news" if slot_data["content_type"] == "real_estate" else "general"
 
-        for label, article_subset in [
+        option_pairs = [
             ("A", article_dicts[:5]),
             ("B", article_dicts[5:10] if len(article_dicts) > 5 else article_dicts[:5])
-        ]:
+        ]
+        for idx, (label, article_subset) in enumerate(option_pairs):
+            # Space out Claude API calls to stay under per-minute token limit
+            if idx > 0:
+                logger.info(f"Waiting 60s before generating option {label} to avoid rate limits")
+                await asyncio.sleep(60)
+
             try:
                 logger.info(f"Generating post {label} for slot {slot_id}")
+
+                # Extract voice_preset from prompt config
+                voice_preset = "professional"
+                if prompt_config_dict:
+                    voice_preset = prompt_config_dict.get("voice_preset", "professional")
+
+                album_mode = slot_data.get("album_mode", False)
 
                 # Generate post content
                 post = await generator.generate_post(
@@ -265,9 +281,11 @@ def generate_content_for_slot(self, slot_id: str):
                     category=category,
                     prompt_config=prompt_config_dict,
                     recent_posts=recent_posts,
+                    voice_preset=voice_preset,
+                    album_mode=album_mode,
                 )
 
-                # Generate image
+                # Generate image(s)
                 logger.info(f"Generating image for option {label}")
                 image_url, image_path, image_base64 = await image_gen.generate_image(
                     prompt=post.image_prompt,
@@ -280,12 +298,33 @@ def generate_content_for_slot(self, slot_id: str):
 
                 logger.info(f"Image generated, base64 length: {len(image_base64) if image_base64 else 0}")
 
+                # Generate album images if in album mode
+                album_image_prompts_json = None
+                album_images_data_json = None
+                if album_mode and post.album_image_prompts:
+                    logger.info(f"Album mode: generating {len(post.album_image_prompts)} additional images")
+                    album_images = await image_gen.generate_album_images(
+                        prompts=post.album_image_prompts,
+                        category=category,
+                        slot_id=slot_id,
+                        option_label=label,
+                        prompt_config=prompt_config_dict,
+                        image_style=post.image_style,
+                    )
+                    album_image_prompts_json = json.dumps(post.album_image_prompts)
+                    album_base64_list = [img[2] for img in album_images if img[2]]
+                    if album_base64_list:
+                        album_images_data_json = json.dumps(album_base64_list)
+                    logger.info(f"Album images generated: {len(album_base64_list)} successful")
+
                 options_to_save.append({
                     "label": label,
                     "post": post,
                     "image_url": image_url,
                     "image_path": image_path,
                     "image_data": image_base64,
+                    "album_image_prompts": album_image_prompts_json,
+                    "album_images_data": album_images_data_json,
                     "source_ids": [a["id"] for a in article_subset],
                     "category": category,
                 })
@@ -337,6 +376,8 @@ def generate_content_for_slot(self, slot_id: str):
                     source_article_ids=json.dumps(opt_data["source_ids"]),
                     ai_quality_score=opt_data["post"].quality_score,
                     image_style=opt_data["post"].image_style,
+                    album_image_prompts=opt_data.get("album_image_prompts"),
+                    album_images_data=opt_data.get("album_images_data"),
                 )
 
                 db.add(option)
@@ -391,11 +432,23 @@ def generate_content_for_slot(self, slot_id: str):
                 content_type=content_type,
                 error_message="No content options could be generated",
             )
+            # Send alert to admin
+            send_alert(
+                "Content Generation Failed",
+                details={
+                    "Slot": slot_id[:8],
+                    "Type": content_type,
+                    "Schedule": str(scheduled_time),
+                },
+                error="Both options A and B failed to generate",
+            )
+            # Raise so Celery retry mechanism kicks in
+            raise RuntimeError(f"All content options failed for slot {slot_id}")
 
         return {
             "slot_id": slot_id,
             "options_created": options_created,
-            "status": "options_ready" if options_created else "failed",
+            "status": "options_ready",
         }
 
     try:
@@ -404,7 +457,7 @@ def generate_content_for_slot(self, slot_id: str):
         logger.error(f"Content generation failed for slot {slot_id}: {e}")
         import traceback
         traceback.print_exc()
-        self.retry(countdown=120, exc=e)
+        self.retry(countdown=180, exc=e)
 
 
 @celery_app.task(bind=True, max_retries=1)
@@ -527,12 +580,20 @@ def generate_all_pending_content(self):
             pending_slots = await manager.get_pending_slots()
 
             results = []
-            for slot in pending_slots:
-                task = generate_content_for_slot.delay(str(slot.id))
+            for i, slot in enumerate(pending_slots):
+                # Stagger each slot by 3 minutes to avoid API rate limits
+                # Each slot needs ~2 min (60s gap between A and B + generation time)
+                delay_seconds = i * 180
+                task = generate_content_for_slot.apply_async(
+                    args=[str(slot.id)],
+                    countdown=delay_seconds,
+                )
                 results.append({
                     "slot_id": str(slot.id),
                     "task_id": task.id,
+                    "delay_seconds": delay_seconds,
                 })
+                logger.info(f"Queued slot {slot.id} with {delay_seconds}s delay")
 
             return {
                 "slots_queued": len(results),
@@ -722,6 +783,14 @@ def _do_publish(slot_id: str = None, slot_number: int = None):
                     except json.JSONDecodeError:
                         hashtags = []
 
+                # Parse album images if present
+                album_images = None
+                if getattr(option, "album_images_data", None):
+                    try:
+                        album_images = json.loads(option.album_images_data)
+                    except json.JSONDecodeError:
+                        album_images = None
+
                 # Create post content (Russian-only)
                 content = PostContent(
                     title_en="",  # Empty for Russian-only channel
@@ -732,11 +801,15 @@ def _do_publish(slot_id: str = None, slot_number: int = None):
                     image_url=option.image_url,
                     image_local_path=option.image_local_path,
                     image_data=option.image_data,  # Base64 encoded image
+                    album_images_data=album_images,
                 )
 
-                # Publish
+                # Publish (album or single post)
                 logger.info(f"Publishing slot {slot.id} to Telegram")
-                publish_result = await publisher.publish_post(content)
+                if album_images and len(album_images) > 0:
+                    publish_result = await publisher.publish_album(content)
+                else:
+                    publish_result = await publisher.publish_post(content)
 
                 if publish_result.success:
                     # Create PublishedPost record (Russian-only)
@@ -839,3 +912,63 @@ def publish_overdue_slots(self):
             return {"overdue": len(overdue_slots)}
 
     return run_async(_publish_overdue())
+
+
+@celery_app.task(bind=True)
+def pipeline_health_check(self):
+    """
+    Daily health check: verify slots were created and content generated.
+    Runs at 02:00 UTC (06:00 Dubai) to catch failures from the overnight pipeline.
+    """
+    logger.info("Running pipeline health check")
+
+    async def _check():
+        AsyncSessionLocal = get_async_session()
+        async with AsyncSessionLocal() as db:
+            today = datetime.now(DUBAI_TZ).date()
+            result = await db.execute(
+                select(ContentSlot).where(
+                    ContentSlot.scheduled_date == today
+                )
+            )
+            slots = result.scalars().all()
+
+            if not slots:
+                send_alert(
+                    "No Slots Created",
+                    details={"Date": str(today)},
+                    error="Daily slot creation may have failed — 0 slots found for today",
+                )
+                return {"status": "alert_sent", "issue": "no_slots"}
+
+            failed = [s for s in slots if s.status == "failed"]
+            pending = [s for s in slots if s.status == "pending"]
+            generating = [s for s in slots if s.status == "generating"]
+
+            issues = []
+            if failed:
+                issues.append(f"{len(failed)} failed")
+            if pending:
+                issues.append(f"{len(pending)} still pending")
+            if generating:
+                issues.append(f"{len(generating)} stuck in generating")
+
+            if issues:
+                send_alert(
+                    "Pipeline Health Issue",
+                    details={
+                        "Date": str(today),
+                        "Total slots": len(slots),
+                        "Issues": ", ".join(issues),
+                        "Failed slots": ", ".join(
+                            f"#{s.slot_number}" for s in failed
+                        ) or "none",
+                    },
+                    error="Content pipeline did not complete successfully",
+                )
+                return {"status": "alert_sent", "issues": issues}
+
+            logger.info(f"Health check passed: {len(slots)} slots OK for {today}")
+            return {"status": "ok", "slots": len(slots)}
+
+    return run_async(_check())

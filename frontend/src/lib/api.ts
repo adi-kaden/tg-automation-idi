@@ -233,6 +233,13 @@ export const api = {
         method: 'POST',
       });
     },
+
+    update: async (id: string, data: { album_mode?: boolean }) => {
+      return fetchWithAuth<import('@/types').ContentSlot>(`/content/slots/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      });
+    },
   },
 
   // Content (additional endpoints)

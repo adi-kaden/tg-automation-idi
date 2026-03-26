@@ -142,6 +142,18 @@ export function useUpdateOption() {
   });
 }
 
+export function useUpdateSlot() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ slotId, data }: { slotId: string; data: { album_mode?: boolean } }) =>
+      api.contentSlots.update(slotId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['content'] });
+    },
+  });
+}
+
 export function useRegenerateSlot() {
   const queryClient = useQueryClient();
 

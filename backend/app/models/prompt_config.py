@@ -35,6 +35,8 @@ class PromptConfig(Base):
     generation_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     tone: Mapped[str] = mapped_column(String(30), default="professional")
     # Values: professional, exciting, analytical, informative, urgent
+    voice_preset: Mapped[str] = mapped_column(String(30), default="professional")
+    # Values: professional, punchy, analytical — selects system prompt block
     max_length_chars: Mapped[int] = mapped_column(Integer, default=700)
 
     # Image generation (Imagen)
