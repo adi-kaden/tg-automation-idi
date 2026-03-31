@@ -5,7 +5,7 @@ import logging
 
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import task_failure
+from celery.signals import task_failure, worker_ready
 
 from app.config import get_settings
 
@@ -111,6 +111,14 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"slot_number": 5},
     },
 
+    # ==================== Catch-up: Publish Overdue Slots ====================
+
+    # Every 10 minutes, check for approved slots that missed their publish window
+    "publish-overdue-slots": {
+        "task": "app.tasks.content_tasks.publish_overdue_slots",
+        "schedule": crontab(minute="*/10"),
+    },
+
     # ==================== Article Cleanup ====================
 
     # 03:00 Dubai = 23:00 UTC - Delete all articles older than 2 days
@@ -118,6 +126,20 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.scraper_tasks.cleanup_old_articles",
         "schedule": crontab(hour=23, minute=0),
         "kwargs": {"days_old": 2},
+    },
+
+    # ==================== Pipeline Health Check ====================
+
+    # 02:00 UTC = 06:00 Dubai - Check if overnight pipeline succeeded
+    "pipeline-health-check": {
+        "task": "app.tasks.content_tasks.pipeline_health_check",
+        "schedule": crontab(hour=2, minute=0),
+    },
+
+    # Every 2 hours - Lightweight check to catch missed slots during the day
+    "ensure-pipeline-running": {
+        "task": "app.tasks.content_tasks.ensure_todays_pipeline",
+        "schedule": crontab(minute=15, hour="*/2"),
     },
 
     # ==================== Analytics Collection ====================
@@ -137,6 +159,23 @@ celery_app.conf.beat_schedule = {
 }
 
 
+# ==================== Worker Startup: Ensure Today's Slots Exist ====================
+
+@worker_ready.connect
+def ensure_todays_slots_on_startup(sender=None, **kwargs):
+    """
+    When the Celery worker starts, check if today's slots exist.
+    If not, create them and trigger content generation.
+    This catches missed slot creation from worker/beat downtime.
+    """
+    logger.info("Worker ready — checking if today's slots exist")
+    # Delay 15s to let the worker fully initialize before running tasks
+    celery_app.send_task(
+        "app.tasks.content_tasks.ensure_todays_pipeline",
+        countdown=15,
+    )
+
+
 # ==================== Global Task Failure Notifications ====================
 
 _TASK_DISPLAY_NAMES = {
@@ -146,9 +185,12 @@ _TASK_DISPLAY_NAMES = {
     "app.tasks.content_tasks.auto_select_for_slot": "Auto-Select Option",
     "app.tasks.content_tasks.check_and_auto_select": "Check Auto-Select",
     "app.tasks.content_tasks.publish_scheduled_slot": "Publish to Telegram",
+    "app.tasks.content_tasks.publish_overdue_slots": "Publish Overdue Slots",
     "app.tasks.scraper_tasks.scrape_all_sources": "Scrape All Sources",
     "app.tasks.scraper_tasks.scrape_single_source": "Scrape Single Source",
     "app.tasks.scraper_tasks.cleanup_old_articles": "Cleanup Articles",
+    "app.tasks.content_tasks.pipeline_health_check": "Pipeline Health Check",
+    "app.tasks.content_tasks.ensure_todays_pipeline": "Ensure Today's Pipeline",
     "app.tasks.analytics_tasks.collect_post_analytics": "Collect Analytics",
     "app.tasks.analytics_tasks.create_daily_channel_snapshot": "Channel Snapshot",
 }
@@ -167,46 +209,54 @@ def notify_task_failure(sender=None, task_id=None, exception=None,
 
     This fires after all retries are exhausted, so it only notifies on
     genuine permanent failures — not transient retry-able errors.
+    Sends to both the SMM chat and the admin alert chat independently.
     """
-    try:
-        bot_token = settings.telegram_bot_token
-        chat_id = settings.telegram_smm_chat_id
-        if not bot_token or not chat_id:
-            return
+    bot_token = settings.telegram_bot_token
+    if not bot_token:
+        return
 
-        task_name = getattr(sender, "name", None) or "Unknown"
-        display_name = _TASK_DISPLAY_NAMES.get(task_name, task_name.rsplit(".", 1)[-1])
+    task_name = getattr(sender, "name", None) or "Unknown"
+    display_name = _TASK_DISPLAY_NAMES.get(task_name, task_name.rsplit(".", 1)[-1])
 
-        error_str = _escape_html(str(exception)[:300]) if exception else "Unknown error"
+    error_str = _escape_html(str(exception)[:300]) if exception else "Unknown error"
 
-        # Build context from args/kwargs
-        ctx_parts = []
-        if kwargs:
-            for k, v in kwargs.items():
-                ctx_parts.append(f"{k}={v}")
-        if args:
-            ctx_parts.extend(str(a)[:80] for a in args)
-        context = _escape_html(", ".join(ctx_parts)) if ctx_parts else "—"
+    # Build context from args/kwargs
+    ctx_parts = []
+    if kwargs:
+        for k, v in kwargs.items():
+            ctx_parts.append(f"{k}={v}")
+    if args:
+        ctx_parts.extend(str(a)[:80] for a in args)
+    context = _escape_html(", ".join(ctx_parts)) if ctx_parts else "—"
 
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        now_str = datetime.now(ZoneInfo("Asia/Dubai")).strftime("%H:%M %d/%m/%Y")
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    now_str = datetime.now(ZoneInfo("Asia/Dubai")).strftime("%H:%M %d/%m/%Y")
 
-        message = (
-            f"🚨 <b>Task Failed</b>\n\n"
-            f"📋 <b>Task:</b> {display_name}\n"
-            f"❌ <b>Error:</b> {error_str}\n"
-            f"📝 <b>Context:</b> {context}\n"
-            f"🕐 <b>Time:</b> {now_str} Dubai"
-        )
+    message = (
+        f"🚨 <b>Task Failed</b>\n\n"
+        f"📋 <b>Task:</b> {display_name}\n"
+        f"❌ <b>Error:</b> {error_str}\n"
+        f"📝 <b>Context:</b> {context}\n"
+        f"🕐 <b>Time:</b> {now_str} Dubai"
+    )
 
-        import httpx
-        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        httpx.post(url, json={
-            "chat_id": chat_id,
-            "text": message,
-            "parse_mode": "HTML",
-        }, timeout=10)
+    import httpx
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
-    except Exception as exc:
-        logger.error(f"Failed to send task failure notification: {exc}")
+    # Send to each chat independently — one failure doesn't block the other
+    chat_ids = set()
+    if settings.telegram_smm_chat_id:
+        chat_ids.add(settings.telegram_smm_chat_id)
+    if settings.telegram_alert_chat_id:
+        chat_ids.add(settings.telegram_alert_chat_id)
+
+    for cid in chat_ids:
+        try:
+            httpx.post(url, json={
+                "chat_id": cid,
+                "text": message,
+                "parse_mode": "HTML",
+            }, timeout=10)
+        except Exception as exc:
+            logger.error(f"Failed to send task failure notification to {cid}: {exc}")

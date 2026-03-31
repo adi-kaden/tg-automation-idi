@@ -97,6 +97,55 @@ async def _fetch_todays_generated_topics(session, exclude_slot_id: str = None) -
         return []
 
 
+@celery_app.task(bind=True)
+def ensure_todays_pipeline(self):
+    """
+    Startup catch-up: ensure today's slots exist and content generation has run.
+    Called on worker startup and can be called manually to recover from downtime.
+    """
+    logger.info("Ensuring today's pipeline is running")
+
+    async def _ensure():
+        AsyncSessionLocal = get_async_session()
+        async with AsyncSessionLocal() as db:
+            today = datetime.now(DUBAI_TZ).date()
+            result = await db.execute(
+                select(ContentSlot).where(ContentSlot.scheduled_date == today)
+            )
+            slots = result.scalars().all()
+
+            if not slots:
+                logger.warning(f"No slots for {today} — creating now (startup catch-up)")
+                manager = SlotManager(db)
+                slots = await manager.create_daily_slots(today)
+                await db.commit()
+                logger.info(f"Created {len(slots)} slots for {today}")
+                # Trigger content generation
+                generate_all_pending_content.apply_async(countdown=10)
+                return {"action": "created_slots", "count": len(slots)}
+
+            pending = [s for s in slots if s.status == "pending"]
+            generating = [s for s in slots if s.status == "generating"]
+
+            # Reset stuck "generating" slots (from a previous worker crash)
+            if generating:
+                for slot in generating:
+                    logger.warning(f"Resetting stuck slot {slot.id} from 'generating' to 'pending'")
+                    slot.status = "pending"
+                await db.commit()
+                pending.extend(generating)
+
+            if pending:
+                logger.info(f"Found {len(pending)} pending slots — triggering content generation")
+                generate_all_pending_content.apply_async(countdown=10)
+                return {"action": "triggered_generation", "pending": len(pending)}
+
+            logger.info(f"Today's pipeline looks healthy: {len(slots)} slots exist")
+            return {"action": "none_needed", "slots": len(slots)}
+
+    return run_async(_ensure())
+
+
 @celery_app.task(bind=True, max_retries=2)
 def create_daily_slots_task(self, target_date_str: str = None):
     """
@@ -968,6 +1017,7 @@ def pipeline_health_check(self):
     """
     Daily health check: verify slots were created and content generated.
     Runs at 02:00 UTC (06:00 Dubai) to catch failures from the overnight pipeline.
+    Auto-recovers by creating missing slots and triggering content generation.
     """
     logger.info("Running pipeline health check")
 
@@ -983,12 +1033,29 @@ def pipeline_health_check(self):
             slots = result.scalars().all()
 
             if not slots:
-                send_alert(
-                    "No Slots Created",
-                    details={"Date": str(today)},
-                    error="Daily slot creation may have failed — 0 slots found for today",
-                )
-                return {"status": "alert_sent", "issue": "no_slots"}
+                # Auto-recover: create today's slots instead of just alerting
+                logger.warning(f"No slots found for {today} — auto-creating now")
+                try:
+                    manager = SlotManager(db)
+                    new_slots = await manager.create_daily_slots(today)
+                    await db.commit()
+                    logger.info(f"Auto-created {len(new_slots)} slots for {today}")
+                    # Trigger content generation for the newly created slots
+                    generate_all_pending_content.apply_async(countdown=10)
+                    send_alert(
+                        "Slots Auto-Recovered",
+                        details={"Date": str(today), "Slots created": len(new_slots)},
+                        error="Daily slot creation was missed — auto-recovered and triggered content generation",
+                    )
+                    return {"status": "auto_recovered", "slots_created": len(new_slots)}
+                except Exception as e:
+                    logger.error(f"Auto-recovery failed: {e}")
+                    send_alert(
+                        "No Slots Created — Auto-Recovery Failed",
+                        details={"Date": str(today), "Error": str(e)[:200]},
+                        error="Daily slot creation failed and auto-recovery also failed",
+                    )
+                    return {"status": "alert_sent", "issue": "no_slots_recovery_failed"}
 
             failed = [s for s in slots if s.status == "failed"]
             pending = [s for s in slots if s.status == "pending"]
@@ -1002,6 +1069,20 @@ def pipeline_health_check(self):
             if generating:
                 issues.append(f"{len(generating)} stuck in generating")
 
+            # Auto-recover stuck "generating" slots (likely from worker crash)
+            if generating:
+                for slot in generating:
+                    logger.warning(f"Resetting stuck generating slot {slot.id} to pending")
+                    slot.status = "pending"
+                await db.commit()
+                # Re-trigger content generation for reset slots
+                generate_all_pending_content.apply_async(countdown=10)
+
+            # Auto-recover pending slots (content generation was missed)
+            if pending:
+                logger.warning(f"Re-triggering content generation for {len(pending)} pending slots")
+                generate_all_pending_content.apply_async(countdown=10)
+
             if issues:
                 send_alert(
                     "Pipeline Health Issue",
@@ -1009,13 +1090,14 @@ def pipeline_health_check(self):
                         "Date": str(today),
                         "Total slots": len(slots),
                         "Issues": ", ".join(issues),
+                        "Auto-recovery": "triggered" if (generating or pending) else "not needed",
                         "Failed slots": ", ".join(
                             f"#{s.slot_number}" for s in failed
                         ) or "none",
                     },
                     error="Content pipeline did not complete successfully",
                 )
-                return {"status": "alert_sent", "issues": issues}
+                return {"status": "alert_sent", "issues": issues, "auto_recovery": bool(generating or pending)}
 
             logger.info(f"Health check passed: {len(slots)} slots OK for {today}")
             return {"status": "ok", "slots": len(slots)}
