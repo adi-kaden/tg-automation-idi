@@ -12,6 +12,7 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import get_settings
 from app.database import get_db
 from app.models.content_slot import ContentSlot
 from app.models.post_option import PostOption
@@ -43,6 +44,7 @@ from app.tasks.content_tasks import (
 )
 from app.dependencies import get_current_user
 
+settings = get_settings()
 router = APIRouter()
 
 
@@ -345,6 +347,16 @@ async def publish_slot(
             album_images = json.loads(option.album_images_data)
         except json.JSONDecodeError:
             album_images = None
+
+    # Acquire slot-specific Redis lock to prevent duplicate publishing
+    import redis as redis_lib
+    redis_client = redis_lib.from_url(settings.effective_redis_url)
+    slot_lock_key = f"publish_slot:{slot.id}"
+    if not redis_client.set(slot_lock_key, "1", nx=True, ex=300):
+        raise HTTPException(
+            status_code=409,
+            detail="Slot is being published by another process",
+        )
 
     # Create post content (Russian only)
     content = PostContent(

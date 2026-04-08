@@ -113,10 +113,10 @@ celery_app.conf.beat_schedule = {
 
     # ==================== Catch-up: Publish Overdue Slots ====================
 
-    # Every 10 minutes, check for approved slots that missed their publish window
+    # Every 10 minutes (offset by 3 min to avoid racing with scheduled publishes at :00)
     "publish-overdue-slots": {
         "task": "app.tasks.content_tasks.publish_overdue_slots",
-        "schedule": crontab(minute="*/10"),
+        "schedule": crontab(minute="3,13,23,33,43,53"),
     },
 
     # ==================== Article Cleanup ====================

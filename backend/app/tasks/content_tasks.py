@@ -739,19 +739,7 @@ def publish_scheduled_slot(self, slot_id: str = None, slot_number: int = None):
         slot_id: Direct slot UUID (for manual publish via API)
         slot_number: Slot number 1-5 (for scheduled publish via Celery beat)
     """
-    import redis
-    from datetime import timedelta
-
     logger.info(f"Publishing task triggered, slot_id={slot_id}, slot_number={slot_number}")
-
-    # Create Redis lock to prevent duplicate publishing
-    redis_client = redis.from_url(settings.effective_redis_url)
-    lock_key = f"publish_lock:{slot_id or f'slot_{slot_number}'}:{datetime.now(DUBAI_TZ).date()}"
-    lock = redis_client.lock(lock_key, timeout=300, blocking_timeout=5)
-
-    if not lock.acquire(blocking=False):
-        logger.warning(f"Could not acquire lock {lock_key}, another worker is publishing")
-        return {"status": "skipped", "reason": "lock_not_acquired"}
 
     try:
         result = run_async(_do_publish(slot_id, slot_number))
@@ -761,11 +749,6 @@ def publish_scheduled_slot(self, slot_id: str = None, slot_number: int = None):
         import traceback
         traceback.print_exc()
         self.retry(countdown=60, exc=e)
-    finally:
-        try:
-            lock.release()
-        except Exception:
-            pass  # Lock may have expired
 
 
 def _do_publish(slot_id: str = None, slot_number: int = None):
@@ -852,6 +835,22 @@ def _do_publish(slot_id: str = None, slot_number: int = None):
                         "success": True,
                         "skipped": True,
                         "reason": "already_published",
+                    })
+                    continue
+
+                # Acquire slot-specific Redis lock to prevent duplicate publishing.
+                # The old lock used slot_number vs slot_id as key, so scheduled
+                # publish and overdue catch-up had different keys and both proceeded.
+                import redis as redis_lib
+                redis_client = redis_lib.from_url(settings.effective_redis_url)
+                slot_lock_key = f"publish_slot:{slot.id}"
+                if not redis_client.set(slot_lock_key, "1", nx=True, ex=300):
+                    logger.info(f"Skipping slot {slot.id} - publish lock held by another worker")
+                    results.append({
+                        "slot_id": str(slot.id),
+                        "success": True,
+                        "skipped": True,
+                        "reason": "publish_lock_held",
                     })
                     continue
 
