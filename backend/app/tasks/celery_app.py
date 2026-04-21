@@ -119,6 +119,16 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="3,13,23,33,43,53"),
     },
 
+    # ==================== Watchdog: Never Miss a Slot ====================
+
+    # Every minute: checks slots scheduled in the last 15 min that haven't
+    # published, applies recovery ladder (retry publish → force auto-select
+    # → evergreen fallback). Also writes a Redis heartbeat for external checks.
+    "watchdog-check-slots": {
+        "task": "app.tasks.content_tasks.watchdog_check_slots",
+        "schedule": crontab(minute="*"),
+    },
+
     # ==================== Article Cleanup ====================
 
     # 03:00 Dubai = 23:00 UTC - Delete all articles older than 2 days
@@ -140,6 +150,13 @@ celery_app.conf.beat_schedule = {
     "ensure-pipeline-running": {
         "task": "app.tasks.content_tasks.ensure_todays_pipeline",
         "schedule": crontab(minute=15, hour="*/2"),
+    },
+
+    # 23:55 Dubai = 19:55 UTC - Daily digest to admin alert chat so ops knows
+    # the system is alive even on all-green days and sees partial failures.
+    "send-daily-digest": {
+        "task": "app.tasks.content_tasks.send_daily_digest",
+        "schedule": crontab(hour=19, minute=55),
     },
 
     # ==================== Analytics Collection ====================
@@ -191,6 +208,8 @@ _TASK_DISPLAY_NAMES = {
     "app.tasks.scraper_tasks.cleanup_old_articles": "Cleanup Articles",
     "app.tasks.content_tasks.pipeline_health_check": "Pipeline Health Check",
     "app.tasks.content_tasks.ensure_todays_pipeline": "Ensure Today's Pipeline",
+    "app.tasks.content_tasks.watchdog_check_slots": "Slot Watchdog",
+    "app.tasks.content_tasks.send_daily_digest": "Daily Digest",
     "app.tasks.analytics_tasks.collect_post_analytics": "Collect Analytics",
     "app.tasks.analytics_tasks.create_daily_channel_snapshot": "Channel Snapshot",
 }

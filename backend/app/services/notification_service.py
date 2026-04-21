@@ -401,7 +401,35 @@ async def send_notification(
         if not method:
             return NotificationResult(success=False, error=f"Unknown notification type: {notification_type}")
 
-        return await method(**kwargs)
+        result = await method(**kwargs)
+
+        # Also forward critical notifications to the admin alert chat so ops
+        # issues are never buried in the SMM chat alone.
+        _CRITICAL_TYPES = {
+            NotificationType.PUBLISH_FAILED,
+            NotificationType.GENERATION_FAILED,
+        }
+        if notification_type in _CRITICAL_TYPES:
+            try:
+                from app.services.alert_service import send_alert
+                title_map = {
+                    NotificationType.PUBLISH_FAILED: "Publish Failed",
+                    NotificationType.GENERATION_FAILED: "Generation Failed",
+                }
+                alert_details = {
+                    k: v for k, v in kwargs.items()
+                    if k in ("slot_id", "scheduled_time", "content_type", "retry_count")
+                    and v is not None
+                }
+                send_alert(
+                    title_map[notification_type],
+                    details=alert_details,
+                    error=kwargs.get("error_message"),
+                )
+            except Exception as alert_exc:
+                logger.error(f"Failed to forward to alert chat: {alert_exc}")
+
+        return result
 
     except ValueError as e:
         # Not configured

@@ -12,6 +12,7 @@ from app.models.channel_snapshot import ChannelSnapshot
 from app.models.post_template import PostTemplate
 from app.models.rejected_url import RejectedArticleURL
 from app.models.prompt_config import PromptConfig
+from app.models.fallback_post import FallbackPost
 
 __all__ = [
     "User",
@@ -27,4 +28,5 @@ __all__ = [
     "PostTemplate",
     "RejectedArticleURL",
     "PromptConfig",
+    "FallbackPost",
 ]

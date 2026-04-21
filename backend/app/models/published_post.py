@@ -18,7 +18,10 @@ class PublishedPost(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     slot_id: Mapped[UUID] = mapped_column(ForeignKey("content_slots.id"), nullable=False)
-    option_id: Mapped[UUID] = mapped_column(ForeignKey("post_options.id"), nullable=False)
+    option_id: Mapped[Optional[UUID]] = mapped_column(
+        ForeignKey("post_options.id"), nullable=True
+    )
+    # Nullable because fallback/evergreen publishes have no PostOption.
 
     # What was actually posted (may differ from option if SMM edited)
     posted_title: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -38,7 +41,7 @@ class PublishedPost(Base):
 
     # Relationships
     slot: Mapped["ContentSlot"] = relationship(foreign_keys=[slot_id])
-    option: Mapped["PostOption"] = relationship()
+    option: Mapped[Optional["PostOption"]] = relationship()
     selector_user: Mapped[Optional["User"]] = relationship()
     analytics: Mapped[Optional["PostAnalytics"]] = relationship(back_populates="post", uselist=False)
 

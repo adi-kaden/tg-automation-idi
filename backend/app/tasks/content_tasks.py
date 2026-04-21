@@ -25,6 +25,7 @@ from app.services.telegram_publisher import TelegramPublisher, PostContent
 from app.services.notification_service import send_notification, NotificationType
 from app.services.alert_service import send_alert
 from app.models.published_post import PublishedPost
+from app.models.fallback_post import FallbackPost
 from app.tasks.celery_app import celery_app
 
 settings = get_settings()
@@ -45,6 +46,25 @@ def run_async(coro):
         return loop.run_until_complete(coro)
     finally:
         loop.close()
+
+
+def try_acquire_redis_lock(key: str, ttl_seconds: int = 300) -> tuple[bool, str]:
+    """
+    Try to acquire a Redis lock. Returns (acquired, status).
+
+    status is one of: "acquired", "held_by_other", "redis_unavailable".
+    Never raises — callers can decide whether to skip or proceed when Redis
+    is unavailable (duplicate risk vs. availability tradeoff).
+    """
+    try:
+        import redis as redis_lib
+        client = redis_lib.from_url(settings.effective_redis_url, socket_timeout=3)
+        if client.set(key, "1", nx=True, ex=ttl_seconds):
+            return True, "acquired"
+        return False, "held_by_other"
+    except Exception as e:
+        logger.error(f"Redis lock {key} unavailable: {e}")
+        return False, "redis_unavailable"
 
 
 async def _fetch_recent_published_posts(session) -> list[dict]:
@@ -558,7 +578,7 @@ def generate_content_for_slot(self, slot_id: str):
         self.retry(countdown=180, exc=e)
 
 
-@celery_app.task(bind=True, max_retries=1)
+@celery_app.task(bind=True, max_retries=3)
 def auto_select_for_slot(self, slot_id: str):
     """
     Auto-select the best option for a slot when deadline passes.
@@ -661,7 +681,9 @@ def auto_select_for_slot(self, slot_id: str):
         return run_async(_auto_select())
     except Exception as e:
         logger.error(f"Auto-selection failed for slot {slot_id}: {e}")
-        self.retry(countdown=60, exc=e)
+        # Exponential backoff: 60s, 180s, 420s
+        countdown = 60 * (3 ** self.request.retries)
+        self.retry(countdown=countdown, exc=e)
 
 
 @celery_app.task(bind=True)
@@ -839,27 +861,67 @@ def _do_publish(slot_id: str = None, slot_number: int = None):
                     continue
 
                 # Acquire slot-specific Redis lock to prevent duplicate publishing.
-                # The old lock used slot_number vs slot_id as key, so scheduled
-                # publish and overdue catch-up had different keys and both proceeded.
-                import redis as redis_lib
-                redis_client = redis_lib.from_url(settings.effective_redis_url)
+                # On Redis outage we skip rather than risk a duplicate — the
+                # watchdog or next beat tick will re-attempt once Redis is back.
                 slot_lock_key = f"publish_slot:{slot.id}"
-                if not redis_client.set(slot_lock_key, "1", nx=True, ex=300):
-                    logger.info(f"Skipping slot {slot.id} - publish lock held by another worker")
+                acquired, lock_status = try_acquire_redis_lock(slot_lock_key, ttl_seconds=300)
+                if not acquired:
+                    logger.info(f"Skipping slot {slot.id} - lock status: {lock_status}")
+                    if lock_status == "redis_unavailable":
+                        send_alert(
+                            "Publish Skipped — Redis Unavailable",
+                            details={
+                                "Slot": str(slot.id)[:8],
+                                "Slot #": slot.slot_number,
+                                "Schedule": slot.scheduled_time,
+                            },
+                            error="Redis lock could not be acquired; skipping to avoid duplicate publish.",
+                        )
                     results.append({
                         "slot_id": str(slot.id),
-                        "success": True,
+                        "success": False,
                         "skipped": True,
-                        "reason": "publish_lock_held",
+                        "reason": lock_status,
                     })
                     continue
 
                 if slot.status != "approved":
-                    logger.info(f"Skipping slot {slot.id} - status is {slot.status}")
+                    # The watchdog will attempt recovery for options_ready slots.
+                    # Still alert so ops knows the scheduled publish bailed.
+                    logger.warning(f"Slot {slot.id} status is {slot.status}, not approved — cannot publish")
+                    send_alert(
+                        "Publish Skipped — Slot Not Approved",
+                        details={
+                            "Slot #": slot.slot_number,
+                            "Schedule": slot.scheduled_time,
+                            "Status": slot.status,
+                        },
+                        error="Slot reached publish time without being approved. Watchdog will attempt recovery.",
+                    )
+                    results.append({
+                        "slot_id": str(slot.id),
+                        "success": False,
+                        "skipped": True,
+                        "reason": f"status_{slot.status}",
+                    })
                     continue
 
                 if not slot.selected_option_id:
                     logger.warning(f"Slot {slot.id} has no selected option")
+                    send_alert(
+                        "Publish Skipped — No Option Selected",
+                        details={
+                            "Slot #": slot.slot_number,
+                            "Schedule": slot.scheduled_time,
+                        },
+                        error="Slot is marked approved but has no selected_option_id. Watchdog will attempt recovery.",
+                    )
+                    results.append({
+                        "slot_id": str(slot.id),
+                        "success": False,
+                        "skipped": True,
+                        "reason": "no_selection",
+                    })
                     continue
 
                 # Get selected option
@@ -870,6 +932,21 @@ def _do_publish(slot_id: str = None, slot_number: int = None):
 
                 if not option:
                     logger.warning(f"Selected option not found for slot {slot.id}")
+                    send_alert(
+                        "Publish Skipped — Selected Option Missing",
+                        details={
+                            "Slot #": slot.slot_number,
+                            "Schedule": slot.scheduled_time,
+                            "Selected option": str(slot.selected_option_id)[:8],
+                        },
+                        error="selected_option_id is set but the PostOption record is missing. Watchdog will attempt recovery.",
+                    )
+                    results.append({
+                        "slot_id": str(slot.id),
+                        "success": False,
+                        "skipped": True,
+                        "reason": "option_missing",
+                    })
                     continue
 
                 # Parse hashtags
@@ -1009,6 +1086,368 @@ def publish_overdue_slots(self):
             return {"overdue": len(overdue_slots)}
 
     return run_async(_publish_overdue())
+
+
+# ==================== Watchdog & Fallback ====================
+
+async def _publish_fallback_for_slot(db, slot) -> tuple[bool, str]:
+    """
+    Publish an evergreen fallback post for a slot that couldn't be recovered.
+    Returns (success, detail) where detail describes which fallback or why it failed.
+    """
+    from sqlalchemy import nulls_first
+
+    # Prefer fallbacks matching slot.content_type; then "any"; then ANY active.
+    async def _pick():
+        result = await db.execute(
+            select(FallbackPost)
+            .where(
+                FallbackPost.is_active == True,
+                FallbackPost.content_type.in_([slot.content_type, "any"]),
+            )
+            .order_by(
+                FallbackPost.times_used.asc(),
+                nulls_first(FallbackPost.last_used_at.asc()),
+            )
+            .limit(1)
+        )
+        picked = result.scalar_one_or_none()
+        if picked:
+            return picked
+        result = await db.execute(
+            select(FallbackPost)
+            .where(FallbackPost.is_active == True)
+            .order_by(
+                FallbackPost.times_used.asc(),
+                nulls_first(FallbackPost.last_used_at.asc()),
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    fb = await _pick()
+    if not fb:
+        return False, "no_fallback_posts_configured"
+
+    try:
+        publisher = TelegramPublisher()
+    except ValueError as e:
+        return False, f"telegram_not_configured: {e}"
+
+    hashtags = []
+    if fb.hashtags:
+        try:
+            hashtags = json.loads(fb.hashtags)
+        except (json.JSONDecodeError, TypeError):
+            hashtags = []
+
+    content = PostContent(
+        title_ru=fb.title_ru,
+        body_ru=fb.body_ru,
+        hashtags=hashtags,
+        image_data=fb.image_data,
+    )
+
+    publish_result = await publisher.publish_post(content)
+    if not publish_result.success:
+        return False, f"telegram_error: {publish_result.error}"
+
+    # Record the publish so channel history + analytics stay consistent.
+    published_post = PublishedPost(
+        slot_id=slot.id,
+        option_id=None,
+        posted_title=fb.title_ru,
+        posted_body=fb.body_ru,
+        posted_language="ru",
+        telegram_message_id=publish_result.message_id_ru,
+        telegram_channel_id=publish_result.channel_id,
+        selected_by="fallback",
+    )
+    db.add(published_post)
+    await db.flush()
+
+    fb.times_used += 1
+    fb.last_used_at = datetime.now(DUBAI_TZ)
+
+    slot.status = "published"
+    slot.published_post_id = published_post.id
+
+    await db.commit()
+
+    logger.info(
+        f"Published fallback {fb.id} for slot {slot.id}, "
+        f"msg_id={publish_result.message_id_ru}"
+    )
+    return True, f"fallback_{str(fb.id)[:8]}"
+
+
+async def _watchdog_recover_slot(db, slot, now) -> dict:
+    """
+    Inspect a single overdue slot and attempt recovery in priority order.
+    Uses a per-slot Redis lock so concurrent watchdog ticks don't collide.
+    """
+    overdue_seconds = int((now - slot.scheduled_at).total_seconds())
+    slot_label = f"#{slot.slot_number} ({slot.scheduled_time})"
+
+    watchdog_lock_key = f"watchdog_slot:{slot.id}"
+    acquired, lock_status = try_acquire_redis_lock(watchdog_lock_key, ttl_seconds=120)
+    if not acquired:
+        logger.debug(f"Watchdog skipping slot {slot.id} - {lock_status}")
+        return {"slot_id": str(slot.id), "action": "skipped", "reason": lock_status}
+
+    logger.info(
+        f"Watchdog inspecting slot {slot_label} "
+        f"(overdue {overdue_seconds}s, status={slot.status})"
+    )
+
+    # Strategy 1: approved + selected → re-trigger publish task (lock-aware idempotent).
+    if slot.status == "approved" and slot.selected_option_id:
+        publish_scheduled_slot.delay(slot_id=str(slot.id))
+        send_alert(
+            "Watchdog: Retrying overdue publish",
+            details={
+                "Slot": slot_label,
+                "Status": slot.status,
+                "Overdue": f"{overdue_seconds}s",
+            },
+            error="Slot was approved but not published — re-triggering publish task.",
+        )
+        return {"slot_id": str(slot.id), "action": "retriggered_publish"}
+
+    # Strategy 2: options_ready without selection → force inline auto-select + publish.
+    if slot.status == "options_ready" and not slot.selected_option_id:
+        try:
+            result = await db.execute(
+                select(ContentSlot)
+                .options(selectinload(ContentSlot.options))
+                .where(ContentSlot.id == slot.id)
+            )
+            slot_full = result.scalar_one_or_none()
+
+            if slot_full and slot_full.options:
+                option_dicts = [
+                    {
+                        "option_label": opt.option_label,
+                        "title_ru": opt.title_ru,
+                        "body_ru": opt.body_ru,
+                        "title_en": opt.title_en,
+                        "body_en": opt.body_en,
+                        "hashtags": json.loads(opt.hashtags) if opt.hashtags else [],
+                        "image_prompt": opt.image_prompt,
+                        "ai_quality_score": opt.ai_quality_score,
+                        "id": str(opt.id),
+                    }
+                    for opt in slot_full.options
+                ]
+
+                selector = AutoSelector()
+                selected_label, reasoning, confidence = await selector.select_best_option(
+                    options=option_dicts,
+                    content_type=slot_full.content_type,
+                    slot_time=slot_full.scheduled_time,
+                    recent_posts=[],
+                )
+                selected_option_id = next(
+                    (opt["id"] for opt in option_dicts if opt["option_label"] == selected_label),
+                    option_dicts[0]["id"],
+                )
+
+                slot_full.status = "approved"
+                slot_full.selected_option_id = UUID(selected_option_id)
+                slot_full.selected_by = "ai"
+                await db.commit()
+
+                publish_scheduled_slot.delay(slot_id=str(slot.id))
+                send_alert(
+                    "Watchdog: Forced auto-select + publish",
+                    details={
+                        "Slot": slot_label,
+                        "Selected": selected_label,
+                        "Confidence": f"{int(confidence * 100)}%",
+                        "Overdue": f"{overdue_seconds}s",
+                    },
+                    error="Slot reached publish window without selection — forced AI selection.",
+                )
+                return {
+                    "slot_id": str(slot.id),
+                    "action": "forced_selection",
+                    "selected": selected_label,
+                }
+        except Exception as e:
+            logger.error(f"Watchdog inline auto-select failed for {slot.id}: {e}")
+            await db.rollback()
+            # Fall through to fallback.
+
+    # Strategy 3: broken state or inline select failed → publish fallback content.
+    # Only engage fallback after 3 min overdue to give earlier strategies a chance.
+    if overdue_seconds >= 180:
+        try:
+            ok, detail = await _publish_fallback_for_slot(db, slot)
+        except Exception as e:
+            logger.error(f"Fallback publish raised for slot {slot.id}: {e}")
+            await db.rollback()
+            ok, detail = False, str(e)
+
+        if ok:
+            send_alert(
+                "Watchdog: Fallback content published",
+                details={
+                    "Slot": slot_label,
+                    "Previous status": slot.status,
+                    "Overdue": f"{overdue_seconds}s",
+                    "Fallback": detail,
+                },
+                error="Live content pipeline failed — evergreen fallback used. Channel not silent.",
+            )
+            return {"slot_id": str(slot.id), "action": "fallback_published", "detail": detail}
+
+        send_alert(
+            "Watchdog: CRITICAL — recovery failed",
+            details={
+                "Slot": slot_label,
+                "Status": slot.status,
+                "Overdue": f"{overdue_seconds}s",
+                "Reason": detail,
+            },
+            error="Cannot recover this slot. Fallback library may be empty. Manual intervention required.",
+        )
+        return {"slot_id": str(slot.id), "action": "critical_failure", "detail": detail}
+
+    return {"slot_id": str(slot.id), "action": "waiting", "overdue": overdue_seconds}
+
+
+@celery_app.task(bind=True)
+def watchdog_check_slots(self):
+    """
+    Runs every minute. For each slot whose scheduled_at was within the last
+    15 minutes and which has not published, apply the recovery ladder:
+
+      1. approved+selected → re-trigger publish
+      2. options_ready without selection → force auto-select + publish
+      3. broken state → publish evergreen fallback content
+      4. still broken → critical alert to admin
+
+    Also writes a heartbeat to Redis so external monitors can detect when
+    beat/worker has been silent.
+    """
+    # Heartbeat (never let an exception here sink the task).
+    try:
+        import redis as redis_lib
+        client = redis_lib.from_url(settings.effective_redis_url, socket_timeout=3)
+        client.set("watchdog:last_tick", datetime.utcnow().isoformat(), ex=900)
+    except Exception as e:
+        logger.warning(f"Watchdog heartbeat write failed: {e}")
+
+    async def _check():
+        AsyncSessionLocal = get_async_session()
+        async with AsyncSessionLocal() as db:
+            now = datetime.now(DUBAI_TZ)
+            cutoff = now - timedelta(minutes=15)
+
+            result = await db.execute(
+                select(ContentSlot)
+                .where(
+                    ContentSlot.scheduled_at <= now,
+                    ContentSlot.scheduled_at > cutoff,
+                    ContentSlot.published_post_id.is_(None),
+                )
+                .order_by(ContentSlot.scheduled_at)
+            )
+            overdue = result.scalars().all()
+
+            if not overdue:
+                return {"checked": 0}
+
+            actions = []
+            for slot in overdue:
+                try:
+                    actions.append(await _watchdog_recover_slot(db, slot, now))
+                except Exception as e:
+                    logger.error(f"Watchdog recovery raised for slot {slot.id}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    actions.append({"slot_id": str(slot.id), "action": "error", "error": str(e)[:200]})
+
+            return {"checked": len(overdue), "actions": actions}
+
+    return run_async(_check())
+
+
+@celery_app.task(bind=True)
+def send_daily_digest(self):
+    """
+    23:55 Dubai (19:55 UTC): summarize today's pipeline and send a digest to the
+    admin alert chat. Confirms the system is alive even on all-green days, and
+    surfaces partial failures that individual alerts might have obscured.
+    """
+    logger.info("Building daily digest")
+
+    async def _digest():
+        AsyncSessionLocal = get_async_session()
+        async with AsyncSessionLocal() as db:
+            today = datetime.now(DUBAI_TZ).date()
+
+            slots_result = await db.execute(
+                select(ContentSlot)
+                .where(ContentSlot.scheduled_date == today)
+                .order_by(ContentSlot.slot_number)
+            )
+            slots = slots_result.scalars().all()
+
+            published_post_ids = [s.published_post_id for s in slots if s.published_post_id]
+            fallback_count = 0
+            human_count = 0
+            ai_count = 0
+            if published_post_ids:
+                pp_result = await db.execute(
+                    select(PublishedPost).where(PublishedPost.id.in_(published_post_ids))
+                )
+                for pp in pp_result.scalars().all():
+                    if pp.selected_by == "fallback":
+                        fallback_count += 1
+                    elif pp.selected_by == "human":
+                        human_count += 1
+                    else:
+                        ai_count += 1
+
+            total = len(slots)
+            published = sum(1 for s in slots if s.status == "published")
+            failed = sum(1 for s in slots if s.status == "failed")
+            pending = total - published - failed
+
+            details = {
+                "Date": str(today),
+                "Published": f"{published}/{total}",
+                "By human": human_count,
+                "By AI": ai_count,
+                "By fallback": fallback_count,
+                "Failed": failed,
+                "Still pending": pending,
+            }
+
+            # Choose severity icon based on outcome
+            if published == total and fallback_count == 0:
+                title = "Daily Digest — All Good"
+                error = None
+            elif published == total and fallback_count > 0:
+                title = "Daily Digest — Published with Fallbacks"
+                error = f"{fallback_count} slot(s) needed evergreen fallback content."
+            else:
+                title = "Daily Digest — Issues"
+                error = f"{total - published} slot(s) did not publish live content."
+
+            send_alert(title, details=details, error=error)
+
+            return {
+                "date": str(today),
+                "total": total,
+                "published": published,
+                "fallback": fallback_count,
+                "failed": failed,
+                "pending": pending,
+            }
+
+    return run_async(_digest())
 
 
 @celery_app.task(bind=True)
