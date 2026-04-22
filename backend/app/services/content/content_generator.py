@@ -46,18 +46,37 @@ class GeneratedPost:
 
 SYSTEM_PROMPT = """You are an expert social media content creator for IDIGOV Real Estate, a premium real estate company in Dubai, UAE. You create engaging Telegram posts in Russian for the Russian-speaking audience of Dubai property investors.
 
-FORMATTING RULES:
-- Output body_ru as Telegram-compatible HTML
-- Allowed HTML tags: <b>, <i>, <blockquote>, <a href="...">
-- FORBIDDEN tags: <p>, <div>, <strong>, <em>, <br>, <span>, <h1>-<h6>
-- Use \\n for line breaks (NOT <br>)
-- Bold key numbers, statistics, prices, and important terms with <b> tags
-- Use <blockquote> where editorially appropriate (expert quotes, key stats, dramatic takeaways)
-- Title must start with a relevant emoji
-- Every sentence must deliver value — no filler, no generic statements, no "water"
+FORMATTING RULES (CRITICAL — Telegram does NOT render Markdown):
+- Output body_ru as Telegram-compatible HTML ONLY. Never use Markdown.
+- NEVER write **bold**, __bold__, *italic*, _italic_, ~~strike~~, `code`, or > quote.
+  Telegram will render those as literal characters, not formatting.
+- WRONG:  "цена выросла на **15%**"   →  user sees literal asterisks
+- RIGHT:  "цена выросла на <b>15%</b>" →  user sees bold
+
+ALLOWED HTML TAGS (use them liberally for visual rhythm):
+- <b>text</b>            — bold. Use for numbers, prices, percentages, key terms.
+- <i>text</i>            — italic. Use for emphasis, foreign terms, soft callouts.
+- <u>text</u>            — underline. Use sparingly for one standout phrase.
+- <s>text</s>            — strikethrough. Use for before/after price comparisons (e.g. <s>800K</s> → <b>650K AED</b>).
+- <code>text</code>      — monospaced. Use for specific terms, codes, addresses.
+- <blockquote>text</blockquote>           — quote block. Use for data/stats callouts, dramatic takeaways, expert quotes.
+- <blockquote expandable>text</blockquote> — expandable quote. Use for longer callouts (>100 chars) so the feed stays clean.
+- <tg-spoiler>text</tg-spoiler>           — hidden until tapped. Use for teaser numbers (e.g. "доходность до <tg-spoiler>12%</tg-spoiler>").
+- <a href="https://...">text</a>          — hyperlinks. Only use https:// URLs.
+
+FORBIDDEN TAGS (will break the message):
+- <p>, <div>, <br>, <span>, <h1>-<h6>, <strong>, <em>, <ul>, <li>
+- Use \\n for line breaks (NOT <br>). Use blank lines between paragraphs.
+
+EDITORIAL RULES:
+- Title must start with a relevant emoji. No HTML tags inside the title.
+- Bold the most impactful numbers, statistics, prices. Not every number — pick the 2-3 that matter.
+- Use <blockquote> for at least one quote/callout per post where editorially appropriate.
+- Mix formatting tools: a post with only <b> looks flat. Try <b> + <i> + <blockquote> together.
+- Every sentence must deliver value — no filler, no generic statements, no "water".
 
 CHARACTER LIMIT:
-The ENTIRE Telegram message (title in <b> tags + body HTML + channel footer) must fit within 1024 characters INCLUDING all HTML tags. Aim for body text of ~500-600 characters maximum to leave room for title, tags, and footer.
+The ENTIRE Telegram message (title + body HTML + channel footer) must fit within 1024 characters INCLUDING all HTML tags. Aim for body text of ~500-600 characters to leave room for title, tags, and footer.
 
 IMPORTANT: All content must be written in Russian. Target audience: Russian-speaking investors and business people interested in Dubai real estate."""
 
@@ -94,13 +113,66 @@ def build_system_prompt(voice_preset: str = "professional", base_system_prompt: 
     return f"{base}\n\n{voice_block}"
 
 
+def _markdown_to_html(text: str) -> str:
+    """
+    Convert common Markdown patterns to Telegram HTML.
+
+    The system prompt forbids Markdown, but Claude sometimes slips into it
+    anyway. This is a safety net so the post renders correctly regardless.
+    Only conversions that are unambiguous and safe are performed here.
+    """
+    # ~~strike~~  →  <s>strike</s>   (run first so the ~~ isn't eaten by anything else)
+    text = re.sub(r"~~(?!\s)(.+?)(?<!\s)~~", r"<s>\1</s>", text, flags=re.DOTALL)
+
+    # **bold**  →  <b>bold</b>   (most common issue — do before single-* to avoid collision)
+    text = re.sub(r"\*\*(?!\s)(.+?)(?<!\s)\*\*", r"<b>\1</b>", text, flags=re.DOTALL)
+
+    # __bold__  →  <b>bold</b>   (alternative Markdown bold)
+    text = re.sub(r"__(?!\s)(.+?)(?<!\s)__", r"<b>\1</b>", text, flags=re.DOTALL)
+
+    # `code`  →  <code>code</code>   (inline code; single backticks, no newlines)
+    text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
+
+    # Single *italic* and _italic_ are deliberately NOT converted — they're
+    # ambiguous with bullet points, word-internal underscores, and emphasis
+    # in prose. Better to leave them than to mangle text.
+
+    # Leading "> " on a line → wrap the whole line in <blockquote>…</blockquote>
+    # Handle contiguous quote lines as a single block.
+    def _blockquote_replace(match: re.Match) -> str:
+        block = match.group(0)
+        # Strip the leading "> " from each line
+        lines = [re.sub(r"^>\s?", "", ln) for ln in block.splitlines()]
+        return "<blockquote>" + "\n".join(lines) + "</blockquote>"
+
+    text = re.sub(
+        r"(?m)^>[^\n]*(?:\n^>[^\n]*)*",
+        _blockquote_replace,
+        text,
+    )
+
+    return text
+
+
 def _repair_html(text: str) -> str:
-    """Close any unclosed <b>, <i>, or <blockquote> tags in the given HTML string."""
-    # Tags to track in order: opening increases depth, closing decreases
+    """
+    Normalize AI output for Telegram:
+      1. Convert any Markdown the model slipped into to HTML.
+      2. Close any unclosed <b>, <i>, <u>, <s>, <code>, or <blockquote> tags.
+    """
+    text = _markdown_to_html(text)
+
+    # Tags to track in order: opening increases depth, closing decreases.
+    # Order matters — close inner tags before outer ones would, so list
+    # block tags last.
     tag_patterns = [
-        ("blockquote", re.compile(r"<blockquote>", re.IGNORECASE), re.compile(r"</blockquote>", re.IGNORECASE)),
         ("b", re.compile(r"<b>", re.IGNORECASE), re.compile(r"</b>", re.IGNORECASE)),
         ("i", re.compile(r"<i>", re.IGNORECASE), re.compile(r"</i>", re.IGNORECASE)),
+        ("u", re.compile(r"<u>", re.IGNORECASE), re.compile(r"</u>", re.IGNORECASE)),
+        ("s", re.compile(r"<s>", re.IGNORECASE), re.compile(r"</s>", re.IGNORECASE)),
+        ("code", re.compile(r"<code>", re.IGNORECASE), re.compile(r"</code>", re.IGNORECASE)),
+        ("tg-spoiler", re.compile(r"<tg-spoiler>", re.IGNORECASE), re.compile(r"</tg-spoiler>", re.IGNORECASE)),
+        ("blockquote", re.compile(r"<blockquote(?:\s+expandable)?>", re.IGNORECASE), re.compile(r"</blockquote>", re.IGNORECASE)),
     ]
     result = text
     for tag_name, open_re, close_re in tag_patterns:
@@ -173,6 +245,13 @@ def _build_generation_prompt(
     guidance = content_type_guidance.get(content_type, content_type_guidance["general_dubai"])
     topic_focus = category_topics.get(category, category_topics["general"])
 
+    content_type_enforcement = ""
+    if content_type == "real_estate":
+        content_type_enforcement = """
+STRICT REQUIREMENT: This post MUST be about Dubai/UAE real estate, property, or construction.
+If the source articles are not about real estate, extract any real estate angle (property prices, development impact, investment implications) or use the articles as background context for a real estate-focused post.
+Do NOT write a general news post for this slot — it must be relevant to property investors."""
+
     recent_posts_section = _build_recent_posts_section(recent_posts or [])
 
     album_section = ""
@@ -200,6 +279,8 @@ ALBUM MODE: Generate 2-5 distinct image prompts for a media group album. Each pr
         # If template didn't have {{recent_posts}} placeholder, append the section
         if recent_posts_section and "RECENTLY PUBLISHED" not in result:
             result += recent_posts_section
+        if content_type_enforcement:
+            result += content_type_enforcement
         if album_section:
             result += album_section
         return result
@@ -223,6 +304,7 @@ Example style: {template.get('example_output', 'N/A')}
 Content Type: {content_type}
 Focus Area: {guidance}
 Category: {category} ({topic_focus})
+{content_type_enforcement}
 {template_section}
 
 SOURCE ARTICLES:
@@ -231,10 +313,16 @@ SOURCE ARTICLES:
 Generate a Telegram post with the following structure (ALL IN RUSSIAN):
 
 1. TITLE (Russian): A catchy, engaging headline in Russian starting with a relevant emoji (max 100 chars)
-2. BODY (Russian): The main post content as Telegram-compatible HTML (use <b>, <i>, <blockquote> only; use \\n for line breaks).
+2. BODY (Russian): The main post content as Telegram HTML. NEVER use Markdown (**, __, *, _, ~~, `, >).
+   ALLOWED TAGS: <b>, <i>, <u>, <s>, <code>, <blockquote>, <blockquote expandable>, <tg-spoiler>, <a href="https://...">
+   FORBIDDEN TAGS: <p>, <div>, <br>, <span>, <strong>, <em>, <h1>-<h6>, <ul>, <li>
+   Use \\n for line breaks (NOT <br>). Blank lines between paragraphs.
    CRITICAL: The ENTIRE Telegram message (title + body + footer) must fit within 1024 characters INCLUDING HTML tags.
-   Aim for ~500-600 characters of body text. Bold key numbers, statistics, prices, and important terms.
-   Use <blockquote> for expert quotes, key stats, or dramatic takeaways. Do NOT include hashtags.
+   Aim for ~500-600 characters of body text.
+   FORMATTING TIPS: Bold key numbers/prices with <b>. Use <i> for emphasis. Use <s> for crossed-out old prices
+   (e.g. <s>800K</s> → <b>650K AED</b>). Use <blockquote> for dramatic callouts or expert quotes.
+   Use <tg-spoiler> for teaser numbers. Mix at least 2 different formatting tags per post for visual rhythm.
+   Do NOT include hashtags.
 3. IMAGE_PROMPT: A detailed prompt for generating an accompanying image (describe the visual concept, composition, subject matter - suitable for a real estate/Dubai context). Do NOT include style/lighting/color instructions — a separate style layer will be applied.
 4. QUALITY_SCORE: Rate the newsworthiness and engagement potential (0.0-1.0)
 5. IMAGE_STYLE: Choose the single most appropriate visual style for the image based on the post content:
