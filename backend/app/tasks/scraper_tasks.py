@@ -8,6 +8,7 @@ import logging
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
 from app.models.scrape_source import ScrapeSource
@@ -27,9 +28,31 @@ from app.tasks.celery_app import celery_app
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-# Create separate engine for Celery tasks (runs in sync context)
-engine = create_async_engine(settings.async_database_url, pool_size=3)
-AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+def _build_session_factory():
+    """
+    Build a fresh async session factory. NullPool + per-call engine avoids:
+      - module-level engine shared across Celery prefork workers
+      - connections from previous asyncio loops causing "got Future attached
+        to different loop" errors when run_async() creates new loops
+      - connection pool exhaustion ("sorry, too many clients already")
+    """
+    engine = create_async_engine(
+        settings.async_database_url,
+        poolclass=NullPool,
+        pool_pre_ping=True,
+    )
+    return async_sessionmaker(engine, expire_on_commit=False)
+
+
+# Backwards compat: module-level name still accessible, but returns a fresh
+# factory each time so nothing is shared across tasks / workers / loops.
+class _LazySessionLocal:
+    def __call__(self, *args, **kwargs):
+        return _build_session_factory()(*args, **kwargs)
+
+
+AsyncSessionLocal = _LazySessionLocal()
 
 
 def run_async(coro):

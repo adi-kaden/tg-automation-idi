@@ -6,6 +6,7 @@ import logging
 from datetime import date, timedelta
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
 from app.services.analytics_collector import AnalyticsCollector
@@ -16,8 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 def get_async_session():
-    """Create a fresh async session for each task."""
-    engine = create_async_engine(settings.async_database_url, pool_size=3, pool_pre_ping=True)
+    """Fresh async session factory per task, NullPool to avoid connection leaks."""
+    engine = create_async_engine(
+        settings.async_database_url,
+        poolclass=NullPool,
+        pool_pre_ping=True,
+    )
     return async_sessionmaker(engine, expire_on_commit=False)
 
 

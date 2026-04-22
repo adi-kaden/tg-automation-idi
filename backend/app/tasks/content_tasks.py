@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import selectinload
+from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
 from app.models.content_slot import ContentSlot
@@ -33,8 +34,19 @@ logger = logging.getLogger(__name__)
 
 
 def get_async_session():
-    """Create a fresh async session for each task."""
-    engine = create_async_engine(settings.async_database_url, pool_size=3, pool_pre_ping=True)
+    """
+    Create a fresh async session factory for each Celery task.
+
+    Uses NullPool so connections are opened on demand and closed when the
+    session exits — no pool that accumulates orphan connections across the
+    many engines this function creates. Fixes "sorry, too many clients
+    already" from Postgres when watchdog / analytics run every minute.
+    """
+    engine = create_async_engine(
+        settings.async_database_url,
+        poolclass=NullPool,
+        pool_pre_ping=True,
+    )
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
