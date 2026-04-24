@@ -28,6 +28,7 @@ from app.services.alert_service import send_alert
 from app.models.published_post import PublishedPost
 from app.models.fallback_post import FallbackPost
 from app.tasks.celery_app import celery_app
+from app.utils.db_errors import is_transient_db_error, transient_retry_countdown
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -735,7 +736,7 @@ def generate_all_pending_content(self):
     return run_async(_generate_all())
 
 
-@celery_app.task(bind=True)
+@celery_app.task(bind=True, max_retries=5)
 def check_and_auto_select(self):
     """
     Check for slots past deadline and auto-select if needed.
@@ -761,7 +762,17 @@ def check_and_auto_select(self):
                 "tasks": results,
             }
 
-    return run_async(_check_slots())
+    try:
+        return run_async(_check_slots())
+    except Exception as e:
+        if is_transient_db_error(e):
+            countdown = transient_retry_countdown(self.request.retries)
+            logger.warning(
+                f"check_and_auto_select transient DB error, retry "
+                f"{self.request.retries + 1}/{self.max_retries} in {countdown}s: {e}"
+            )
+            raise self.retry(exc=e, countdown=countdown)
+        raise
 
 
 @celery_app.task(bind=True, max_retries=2)
@@ -1064,7 +1075,7 @@ def _do_publish(slot_id: str = None, slot_number: int = None):
     return _publish()
 
 
-@celery_app.task(bind=True)
+@celery_app.task(bind=True, max_retries=5)
 def publish_overdue_slots(self):
     """Catch-up: publish any approved slots past their scheduled time."""
 
@@ -1097,7 +1108,17 @@ def publish_overdue_slots(self):
 
             return {"overdue": len(overdue_slots)}
 
-    return run_async(_publish_overdue())
+    try:
+        return run_async(_publish_overdue())
+    except Exception as e:
+        if is_transient_db_error(e):
+            countdown = transient_retry_countdown(self.request.retries)
+            logger.warning(
+                f"publish_overdue_slots transient DB error, retry "
+                f"{self.request.retries + 1}/{self.max_retries} in {countdown}s: {e}"
+            )
+            raise self.retry(exc=e, countdown=countdown)
+        raise
 
 
 # ==================== Watchdog & Fallback ====================
@@ -1328,7 +1349,7 @@ async def _watchdog_recover_slot(db, slot, now) -> dict:
     return {"slot_id": str(slot.id), "action": "waiting", "overdue": overdue_seconds}
 
 
-@celery_app.task(bind=True)
+@celery_app.task(bind=True, max_retries=5)
 def watchdog_check_slots(self):
     """
     Runs every minute. For each slot whose scheduled_at was within the last
@@ -1375,6 +1396,10 @@ def watchdog_check_slots(self):
                 try:
                     actions.append(await _watchdog_recover_slot(db, slot, now))
                 except Exception as e:
+                    if is_transient_db_error(e):
+                        # Let the outer handler retry the whole watchdog pass
+                        # instead of swallowing it as a per-slot error.
+                        raise
                     logger.error(f"Watchdog recovery raised for slot {slot.id}: {e}")
                     import traceback
                     traceback.print_exc()
@@ -1382,7 +1407,17 @@ def watchdog_check_slots(self):
 
             return {"checked": len(overdue), "actions": actions}
 
-    return run_async(_check())
+    try:
+        return run_async(_check())
+    except Exception as e:
+        if is_transient_db_error(e):
+            countdown = transient_retry_countdown(self.request.retries)
+            logger.warning(
+                f"watchdog_check_slots transient DB error, retry "
+                f"{self.request.retries + 1}/{self.max_retries} in {countdown}s: {e}"
+            )
+            raise self.retry(exc=e, countdown=countdown)
+        raise
 
 
 @celery_app.task(bind=True)

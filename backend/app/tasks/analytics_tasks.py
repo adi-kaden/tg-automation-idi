@@ -11,6 +11,7 @@ from sqlalchemy.pool import NullPool
 from app.config import get_settings
 from app.services.analytics_collector import AnalyticsCollector
 from app.tasks.celery_app import celery_app
+from app.utils.db_errors import is_transient_db_error, transient_retry_countdown
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ def run_async(coro):
         loop.close()
 
 
-@celery_app.task(bind=True, max_retries=3)
+@celery_app.task(bind=True, max_retries=5)
 def collect_post_analytics(self, days_back: int = 7):
     """
     Collect analytics for recently published posts using Telethon.
@@ -70,13 +71,20 @@ def collect_post_analytics(self, days_back: int = 7):
             from telethon.errors import FloodWaitError
             if isinstance(e, FloodWaitError):
                 logger.warning(f"FloodWait: retrying in {e.seconds + 5}s")
-                self.retry(countdown=e.seconds + 5, exc=e)
-                return
+                raise self.retry(countdown=e.seconds + 5, exc=e)
         except ImportError:
             pass
 
+        if is_transient_db_error(e):
+            countdown = transient_retry_countdown(self.request.retries)
+            logger.warning(
+                f"collect_post_analytics transient DB error, retry "
+                f"{self.request.retries + 1}/{self.max_retries} in {countdown}s: {e}"
+            )
+            raise self.retry(exc=e, countdown=countdown)
+
         logger.error(f"Failed to collect post analytics: {e}")
-        self.retry(countdown=60, exc=e)
+        raise self.retry(countdown=60, exc=e)
 
 
 @celery_app.task(bind=True, max_retries=2)

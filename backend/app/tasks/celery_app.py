@@ -219,6 +219,42 @@ def _escape_html(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+# Cooldown (seconds) for deduping identical failure alerts. A single
+# Postgres recovery can otherwise produce a dozen identical alerts in
+# under a minute as every scheduled task hits the same error.
+_FAILURE_ALERT_COOLDOWN = 600
+
+
+def _should_send_failure_alert(task_name: str, error_str: str) -> tuple[bool, int]:
+    """
+    Return (send?, suppressed_count). Uses Redis SET NX EX to collapse
+    repeated identical alerts (same task + same error signature) into one
+    alert per cooldown window. On Redis failure we always send.
+    """
+    import hashlib
+    try:
+        import redis as redis_lib
+        normalized = f"{task_name}|{error_str[:160]}"
+        sig = hashlib.md5(normalized.encode("utf-8")).hexdigest()[:16]
+        client = redis_lib.from_url(settings.effective_redis_url, socket_timeout=3)
+        key = f"tfail:dedupe:{sig}"
+        was_first = client.set(key, "1", nx=True, ex=_FAILURE_ALERT_COOLDOWN)
+        if was_first:
+            return True, 0
+        # Already sent recently — bump a counter so we know how many were suppressed.
+        count_key = f"tfail:dedupe:count:{sig}"
+        suppressed = client.incr(count_key)
+        client.expire(count_key, _FAILURE_ALERT_COOLDOWN)
+        logger.info(
+            f"Suppressing duplicate failure alert: {task_name} "
+            f"(sig={sig}, suppressed_so_far={suppressed})"
+        )
+        return False, suppressed
+    except Exception as exc:
+        logger.warning(f"Failure-alert dedupe check failed, sending anyway: {exc}")
+        return True, 0
+
+
 @task_failure.connect
 def notify_task_failure(sender=None, task_id=None, exception=None,
                         args=None, kwargs=None, traceback=None,
@@ -229,6 +265,9 @@ def notify_task_failure(sender=None, task_id=None, exception=None,
     This fires after all retries are exhausted, so it only notifies on
     genuine permanent failures — not transient retry-able errors.
     Sends to both the SMM chat and the admin alert chat independently.
+
+    Identical failures (same task + same error) within a short cooldown
+    are deduped so a Postgres recovery window can't spam the channel.
     """
     bot_token = settings.telegram_bot_token
     if not bot_token:
@@ -237,7 +276,12 @@ def notify_task_failure(sender=None, task_id=None, exception=None,
     task_name = getattr(sender, "name", None) or "Unknown"
     display_name = _TASK_DISPLAY_NAMES.get(task_name, task_name.rsplit(".", 1)[-1])
 
-    error_str = _escape_html(str(exception)[:300]) if exception else "Unknown error"
+    raw_error = str(exception)[:300] if exception else "Unknown error"
+    error_str = _escape_html(raw_error)
+
+    should_send, suppressed = _should_send_failure_alert(task_name, raw_error)
+    if not should_send:
+        return
 
     # Build context from args/kwargs
     ctx_parts = []
