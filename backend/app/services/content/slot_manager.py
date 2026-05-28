@@ -287,7 +287,25 @@ class SlotManager:
         result = await self.db.execute(query)
         articles = list(result.scalars().all())
 
-        # Fallback: if no articles found with preferred categories, get ANY unused articles
+        # Fallback 1: For real_estate, try including already-used real estate articles
+        # rather than switching to unrelated general topics
+        if not articles and content_type == "real_estate":
+            logger.warning(
+                f"No unused real estate articles. Falling back to used real estate articles."
+            )
+            fallback_query = (
+                select(ScrapedArticle)
+                .where(ScrapedArticle.category.in_(preferred_categories))
+                .order_by(
+                    ScrapedArticle.relevance_score.desc(),
+                    ScrapedArticle.scraped_at.desc(),
+                )
+                .limit(limit)
+            )
+            fallback_result = await self.db.execute(fallback_query)
+            articles = list(fallback_result.scalars().all())
+
+        # Fallback 2: if still nothing, get ANY unused articles
         if not articles:
             logger.warning(
                 f"No articles found for {content_type} with categories {preferred_categories}. "

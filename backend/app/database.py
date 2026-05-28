@@ -22,13 +22,30 @@ class Base(DeclarativeBase):
     metadata = metadata
 
 
-# Create async engine
+# Create async engine.
+#
+# Hardened against Railway's Postgres proxy: hung queries used to pin every
+# connection in the pool indefinitely (no statement_timeout, no command_timeout,
+# no pool_recycle), poisoning the entire pool so every API endpoint timed out.
+# Now any single query that stalls > 30s is killed both server-side
+# (statement_timeout) and client-side (asyncpg command_timeout), connections
+# are recycled every 5 min so silently-dropped proxy connections refresh
+# themselves, and idle-in-transaction sessions can't park a connection forever.
 engine = create_async_engine(
     settings.async_database_url,
     echo=settings.debug,
     pool_size=5,
     max_overflow=10,
     pool_pre_ping=True,
+    pool_recycle=300,
+    pool_timeout=10,
+    connect_args={
+        "command_timeout": 30,
+        "server_settings": {
+            "statement_timeout": "30000",
+            "idle_in_transaction_session_timeout": "60000",
+        },
+    },
 )
 
 # Create async session factory

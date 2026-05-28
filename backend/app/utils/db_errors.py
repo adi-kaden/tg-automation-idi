@@ -8,19 +8,24 @@ hiccups — all of which resolve on their own within seconds to minutes.
 """
 from __future__ import annotations
 
+import asyncio
+
 from sqlalchemy.exc import (
     DBAPIError,
     DisconnectionError,
     InterfaceError,
     OperationalError,
+    TimeoutError as SATimeoutError,
 )
 
 # Postgres SQLSTATEs that indicate transient, self-resolving conditions.
+#   57014 query_canceled            <-- statement_timeout / pg_cancel_backend
 #   57P01 admin_shutdown
 #   57P02 crash_shutdown
 #   57P03 cannot_connect_now        <-- "database system is in recovery mode"
 #   08xxx connection_exception family
 _TRANSIENT_SQLSTATES = {
+    "57014",
     "57P01", "57P02", "57P03",
     "08000", "08001", "08003", "08004", "08006", "08007", "08P01",
 }
@@ -39,6 +44,11 @@ _TRANSIENT_MARKERS = (
     "ssl connection has been closed unexpectedly",
     "connection is closed",
     "cannot perform operation: another operation is in progress",
+    "canceling statement due to statement timeout",
+    "querycancellederror",
+    "connectiondoesnotexisterror",
+    "command timed out",
+    "timeout context manager should be used inside a task",
 )
 
 
@@ -48,13 +58,18 @@ def is_transient_db_error(exc: BaseException | None) -> bool:
 
     Recognised cases:
       * SQLAlchemy DisconnectionError / InterfaceError (driver lost the link)
+      * SQLAlchemy TimeoutError (pool-checkout timeout under proxy saturation)
+      * asyncio.TimeoutError from asyncpg's command_timeout
       * OperationalError / DBAPIError whose SQLSTATE is in the transient set
       * Any exception whose message contains a known transient marker
     """
     if exc is None:
         return False
 
-    if isinstance(exc, (DisconnectionError, InterfaceError)):
+    if isinstance(exc, (DisconnectionError, InterfaceError, SATimeoutError)):
+        return True
+
+    if isinstance(exc, asyncio.TimeoutError):
         return True
 
     if isinstance(exc, (OperationalError, DBAPIError)):
@@ -62,11 +77,20 @@ def is_transient_db_error(exc: BaseException | None) -> bool:
         sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
         if sqlstate and sqlstate in _TRANSIENT_SQLSTATES:
             return True
+        # asyncpg's command_timeout surfaces as OperationalError wrapping
+        # asyncio.TimeoutError — check the wrapped cause.
+        if isinstance(orig, asyncio.TimeoutError):
+            return True
 
     msg = str(exc).lower()
     return any(marker in msg for marker in _TRANSIENT_MARKERS)
 
 
-def transient_retry_countdown(attempt: int, base: int = 30, cap: int = 300) -> int:
-    """Exponential backoff for Postgres retries: 30s, 60s, 120s, 240s, 300s."""
+def transient_retry_countdown(attempt: int, base: int = 30, cap: int = 600) -> int:
+    """Exponential backoff for Postgres retries: 30s, 60s, 120s, 240s, 480s, then 600s.
+
+    Combined with max_retries=8 on publish-critical tasks, total wait from
+    initial fire to final attempt is ~45 min — long enough to absorb a Railway
+    Postgres recovery / failover window without dropping a publish.
+    """
     return min(base * (2 ** max(attempt, 0)), cap)

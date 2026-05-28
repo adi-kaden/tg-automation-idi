@@ -41,6 +41,13 @@ def _build_session_factory():
         settings.async_database_url,
         poolclass=NullPool,
         pool_pre_ping=True,
+        connect_args={
+            "command_timeout": 60,
+            "server_settings": {
+                "statement_timeout": "60000",
+                "idle_in_transaction_session_timeout": "120000",
+            },
+        },
     )
     return async_sessionmaker(engine, expire_on_commit=False)
 

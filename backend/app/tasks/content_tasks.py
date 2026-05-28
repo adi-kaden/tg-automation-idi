@@ -42,11 +42,23 @@ def get_async_session():
     session exits — no pool that accumulates orphan connections across the
     many engines this function creates. Fixes "sorry, too many clients
     already" from Postgres when watchdog / analytics run every minute.
+
+    Aggressive statement_timeout + command_timeout so a single hung query
+    against the Railway proxy can't hold a Celery worker slot for the full
+    30-min task_time_limit. A query that stalls >60s gets cancelled and the
+    existing transient-error retry path takes over.
     """
     engine = create_async_engine(
         settings.async_database_url,
         poolclass=NullPool,
         pool_pre_ping=True,
+        connect_args={
+            "command_timeout": 60,
+            "server_settings": {
+                "statement_timeout": "60000",
+                "idle_in_transaction_session_timeout": "120000",
+            },
+        },
     )
     return async_sessionmaker(engine, expire_on_commit=False)
 
@@ -736,7 +748,7 @@ def generate_all_pending_content(self):
     return run_async(_generate_all())
 
 
-@celery_app.task(bind=True, max_retries=5)
+@celery_app.task(bind=True, max_retries=8)
 def check_and_auto_select(self):
     """
     Check for slots past deadline and auto-select if needed.
@@ -1075,7 +1087,7 @@ def _do_publish(slot_id: str = None, slot_number: int = None):
     return _publish()
 
 
-@celery_app.task(bind=True, max_retries=5)
+@celery_app.task(bind=True, max_retries=8)
 def publish_overdue_slots(self):
     """Catch-up: publish any approved slots past their scheduled time."""
 
@@ -1349,7 +1361,7 @@ async def _watchdog_recover_slot(db, slot, now) -> dict:
     return {"slot_id": str(slot.id), "action": "waiting", "overdue": overdue_seconds}
 
 
-@celery_app.task(bind=True, max_retries=5)
+@celery_app.task(bind=True, max_retries=8)
 def watchdog_check_slots(self):
     """
     Runs every minute. For each slot whose scheduled_at was within the last

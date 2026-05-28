@@ -18,11 +18,22 @@ logger = logging.getLogger(__name__)
 
 
 def get_async_session():
-    """Fresh async session factory per task, NullPool to avoid connection leaks."""
+    """Fresh async session factory per task, NullPool to avoid connection leaks.
+
+    Statement + command timeouts bound a single hung query to 60s so a flaky
+    Railway proxy can't pin a Celery worker slot for the full task time limit.
+    """
     engine = create_async_engine(
         settings.async_database_url,
         poolclass=NullPool,
         pool_pre_ping=True,
+        connect_args={
+            "command_timeout": 60,
+            "server_settings": {
+                "statement_timeout": "60000",
+                "idle_in_transaction_session_timeout": "120000",
+            },
+        },
     )
     return async_sessionmaker(engine, expire_on_commit=False)
 
@@ -37,7 +48,7 @@ def run_async(coro):
         loop.close()
 
 
-@celery_app.task(bind=True, max_retries=5)
+@celery_app.task(bind=True, max_retries=8)
 def collect_post_analytics(self, days_back: int = 7):
     """
     Collect analytics for recently published posts using Telethon.
