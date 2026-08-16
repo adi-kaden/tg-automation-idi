@@ -132,14 +132,6 @@ export default function LoginPage() {
             </Button>
           </form>
 
-          <div className="mt-6 text-center text-sm text-slate-500">
-            <p>Demo credentials:</p>
-            <p className="mt-1">
-              <code className="rounded bg-slate-100 px-1 py-0.5">admin@idigov.com</code>
-              {' / '}
-              <code className="rounded bg-slate-100 px-1 py-0.5">Admin123!</code>
-            </p>
-          </div>
         </CardContent>
       </Card>
     </div>

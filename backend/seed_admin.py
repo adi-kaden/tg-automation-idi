@@ -9,19 +9,27 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from app.config import get_settings
 from app.models.user import User
 from app.utils.security import hash_password
+from seed import initial_users_from_env
 
 settings = get_settings()
 
 
 async def seed_admin():
     """Create admin user if it doesn't exist."""
+    configured_admin = next(
+        (user for user in initial_users_from_env() if user["role"] == "admin"),
+        None,
+    )
+    if configured_admin is None:
+        raise RuntimeError("INITIAL_ADMIN_EMAIL and INITIAL_ADMIN_PASSWORD must be configured")
+
     engine = create_async_engine(settings.async_database_url, pool_size=3)
     AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
     async with AsyncSessionLocal() as db:
         # Check if admin already exists
         result = await db.execute(
-            select(User).where(User.email == "admin@idigov.com")
+            select(User).where(User.email == configured_admin["email"])
         )
         existing = result.scalar_one_or_none()
 
@@ -31,17 +39,15 @@ async def seed_admin():
 
         # Create admin user
         admin = User(
-            email="admin@idigov.com",
-            hashed_password=hash_password("Admin123!"),
-            name="Admin User",
-            role="admin",
+            email=configured_admin["email"],
+            hashed_password=hash_password(configured_admin["password"]),
+            name=configured_admin["name"],
+            role=configured_admin["role"],
             is_active=True,
         )
         db.add(admin)
         await db.commit()
         print("Admin user created successfully!")
-        print("Email: admin@idigov.com")
-        print("Password: Admin123!")
 
     await engine.dispose()
 

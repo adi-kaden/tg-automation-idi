@@ -3,6 +3,7 @@ Database seed script for TG Content Engine.
 Creates default users, scrape sources, and post templates.
 """
 import asyncio
+import os
 from datetime import datetime
 
 from sqlalchemy import select
@@ -13,28 +14,31 @@ from app.models import User, ScrapeSource, PostTemplate
 from app.utils.security import hash_password
 
 
+def initial_users_from_env() -> list[dict[str, str]]:
+    configured_roles = (
+        ("ADMIN", "Admin User", "admin"),
+        ("SMM", "SMM Specialist", "smm"),
+        ("VIEWER", "Viewer User", "viewer"),
+    )
+    users: list[dict[str, str]] = []
+    for prefix, name, role in configured_roles:
+        email_key = f"INITIAL_{prefix}_EMAIL"
+        password_key = f"INITIAL_{prefix}_PASSWORD"
+        email = os.getenv(email_key, "").strip()
+        password = os.getenv(password_key, "")
+        if not email and not password:
+            continue
+        if not email or not password:
+            raise ValueError(f"{email_key}/{password_key} must be configured together")
+        if len(password) < 16:
+            raise ValueError(f"{password_key} must contain at least 16 characters")
+        users.append({"email": email, "name": name, "password": password, "role": role})
+    return users
+
+
 async def seed_users(db: AsyncSession):
     """Create default users."""
-    users_data = [
-        {
-            "email": "admin@idigov.com",
-            "name": "Admin User",
-            "password": "Admin123!",
-            "role": "admin",
-        },
-        {
-            "email": "smm@idigov.com",
-            "name": "SMM Specialist",
-            "password": "Smm123!",
-            "role": "smm",
-        },
-        {
-            "email": "viewer@idigov.com",
-            "name": "Viewer User",
-            "password": "Viewer123!",
-            "role": "viewer",
-        },
-    ]
+    users_data = initial_users_from_env()
 
     for user_data in users_data:
         # Check if user exists
@@ -312,10 +316,6 @@ async def main():
         await seed_templates(db)
 
     print("\n✅ Database seeding complete!")
-    print("\nDefault login credentials:")
-    print("  Admin: admin@idigov.com / Admin123!")
-    print("  SMM:   smm@idigov.com / Smm123!")
-    print("  Viewer: viewer@idigov.com / Viewer123!")
 
 
 if __name__ == "__main__":
